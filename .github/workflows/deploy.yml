@@ -10,6 +10,11 @@ name: Build and Deploy
 # though this repo only builds/pushes the api image. job-hunter-site's own
 # deploy.yml just pulls+restarts the frontend service against the file this
 # workflow writes; it never rewrites the file itself.
+#
+# pull/up are scoped to job-hunter-api + cloudflared only — `docker compose
+# pull` aborts the whole command if ANY referenced image can't be resolved,
+# so an unscoped pull here would fail (and block backend deploys) whenever
+# the frontend image hasn't been pushed yet.
 
 on:
   push:
@@ -93,8 +98,8 @@ jobs:
             IMAGE_TAG=${{ github.sha }}
             EOF
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker compose -f docker-compose.prod.yml --env-file .env pull
-            docker compose -f docker-compose.prod.yml --env-file .env up -d
+            docker compose -f docker-compose.prod.yml --env-file .env pull job-hunter-api cloudflared
+            docker compose -f docker-compose.prod.yml --env-file .env up -d job-hunter-api cloudflared
             docker image prune -f
         env:
           COMPOSE_CONTENT: ${{ steps.compose.outputs.content }}
