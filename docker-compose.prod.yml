@@ -1,6 +1,8 @@
 # Standalone production deployment — runs independently of the job-hunter
 # bot's own compose stack (different repo, different lifecycle). Only shares
-# the VPS host. Deployed by .github/workflows/deploy.yml via SSH + scp.
+# the VPS host. This file is written by job-hunter-api's deploy.yml only —
+# job-hunter-site's deploy.yml pulls/restarts just the `frontend` service
+# against whatever is here, it never rewrites the file itself.
 # Data is mounted from ./data/ (currently the test fixtures, not the bot's
 # live tracker.db — see docs/ for the cutover plan).
 services:
@@ -25,9 +27,21 @@ services:
         max-size: "10m"
         max-file: "5"
 
-  # Exposes job-hunter-api at job-hunter.igrflex.work over Cloudflare Tunnel
-  # (dashboard: Zero Trust → Networks → Tunnels → job-hunter-vps). Routes
-  # http://job-hunter-api:3000 inside this compose network.
+  frontend:
+    image: ghcr.io/igrdevelop/job-hunter-site:latest
+    container_name: job-hunter-frontend
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Exposes job-hunter-api and frontend at job-hunter.igrflex.work over
+  # Cloudflare Tunnel (dashboard: Zero Trust → Networks → Tunnels →
+  # job-hunter-vps), path-routed: /api, /auth → http://job-hunter-api:3000,
+  # everything else → http://job-hunter-frontend:80, inside this compose
+  # network.
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: job-hunter-cloudflared
