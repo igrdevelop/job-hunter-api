@@ -1,0 +1,22 @@
+# Standalone test deployment: builds the Angular frontend (job-hunter-site)
+# + this NestJS backend into one image and runs it against the fixture
+# tracker.db/Applications (test/fixtures/), never the bot's real data.
+# Run from this directory: docker compose -f docker-compose.test.yml up --build
+services:
+  job-hunter-api:
+    build:
+      context: .
+      additional_contexts:
+        frontend: ../job-hunter-site
+    container_name: job-hunter-api-test
+    ports:
+      - "3000:3000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-test-only-secret-do-not-use-in-production-please-change-me}
+      SEED_USER_EMAIL: ${SEED_USER_EMAIL:-test@example.com}
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-test-password-123}
+      TRACKER_DB_PATH: /app/data/tracker.db
+      FILES_PATH: /app/data/Applications
+    volumes:
+      - ./test/fixtures/tracker.db:/app/data/tracker.db
+      - ./test/fixtures/Applications:/app/data/Applications:ro

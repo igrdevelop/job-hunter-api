@@ -45,11 +45,8 @@ export class ApplicationsController {
     if (dto.sent !== undefined) {
       this.tracker.updateSent(id, dto.sent);
     }
-    if (dto.to_learn !== undefined) {
-      this.tracker.updateToLearn(id, dto.to_learn);
-    }
-    if (dto.reapplication !== undefined) {
-      this.tracker.updateReapplication(id, dto.reapplication);
+    if (dto.toLearn !== undefined) {
+      this.tracker.updateToLearn(id, dto.toLearn);
     }
     return this.tracker.getApplicationById(id);
   }

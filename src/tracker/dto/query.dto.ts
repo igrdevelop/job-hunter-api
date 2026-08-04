@@ -6,12 +6,25 @@ export const SORTABLE_COLUMNS = [
   'company',
   'title',
   'stack',
-  'ats_status',
+  'atsStatus',
   'sent',
-  'cost_usd',
-  'ats_verdict',
+  'costUsd',
+  'atsVerdict',
 ] as const;
 export type SortableColumn = (typeof SORTABLE_COLUMNS)[number];
+
+// Maps the camelCase wire-contract sort keys to the real snake_case
+// columns in the bot's tracker.db schema.
+export const SORT_COLUMN_MAP: Record<SortableColumn, string> = {
+  date: 'date',
+  company: 'company',
+  title: 'title',
+  stack: 'stack',
+  atsStatus: 'ats_status',
+  sent: 'sent',
+  costUsd: 'cost_usd',
+  atsVerdict: 'ats_verdict',
+};
 
 export const APPLICATION_STATUSES = [
   'applied',
