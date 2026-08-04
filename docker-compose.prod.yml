@@ -1,0 +1,37 @@
+# Standalone production deployment — runs independently of the job-hunter
+# bot's own compose stack (different repo, different lifecycle). Only shares
+# the VPS host. Deployed by .github/workflows/deploy.yml via SSH + scp.
+# Data is mounted from ./data/ (currently the test fixtures, not the bot's
+# live tracker.db — see docs/ for the cutover plan).
+services:
+  job-hunter-api:
+    image: ghcr.io/igrdevelop/job-hunter-api:${IMAGE_TAG:-latest}
+    container_name: job-hunter-api
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      SEED_USER_EMAIL: ${SEED_USER_EMAIL}
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
+      TRACKER_DB_PATH: /app/data/tracker.db
+      FILES_PATH: /app/data/Applications
+    volumes:
+      - ./data/tracker.db:/app/data/tracker.db
+      - ./data/Applications:/app/data/Applications:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Exposes job-hunter-api at job-hunter.igrflex.work over Cloudflare Tunnel
+  # (dashboard: Zero Trust → Networks → Tunnels → job-hunter-vps). Routes
+  # http://job-hunter-api:3000 inside this compose network.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: job-hunter-cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
