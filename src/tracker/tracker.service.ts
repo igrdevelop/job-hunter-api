@@ -54,7 +54,11 @@ export class TrackerService {
 
   constructor(private readonly config: ConfigService) {
     this.db = new Database(this.config.get<string>('tracker.dbPath')!);
+    // Shared with the bot process on the same file — WAL for readers/writers
+    // concurrency; busy_timeout so a short bot write doesn't fail our PATCH
+    // with SQLITE_BUSY (better-sqlite3 default timeout is 0ms).
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('busy_timeout = 5000');
   }
 
   getApplications(params: QueryApplicationsDto): PaginatedResult<Application> {
