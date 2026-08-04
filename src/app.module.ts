@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt.guard';
@@ -21,6 +22,7 @@ import { HealthModule } from './health/health.module';
     HealthModule,
     ApplicationsModule,
     FilesModule,
+    AnalyticsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })

@@ -32,12 +32,13 @@ const APPLICATION_COLUMNS = `
 
 // Bot doesn't store a status column — derive one from ats_status/sent so
 // filtering and stats can bucket applications the way the frontend needs.
+// "sent" here mirrors hunter/funnel.py's _is_sent() non-sent value set.
 const STATUS_CASE = `
   CASE
-    WHEN sent = 'EXPIRED' OR ats_status = 'EXPIRED' THEN 'expired'
+    WHEN LOWER(TRIM(sent)) = 'expired' OR ats_status = 'EXPIRED' THEN 'expired'
     WHEN ats_status = 'FAIL' OR ats_status = 'SKIP' THEN 'failed'
     WHEN ats_status = '' OR ats_status = '—' OR ats_status = 'MANUAL' THEN 'pending'
-    WHEN sent != '' THEN 'sent'
+    WHEN LOWER(TRIM(sent)) NOT IN ('', '—', '–', '-', 'expired') THEN 'sent'
     ELSE 'applied'
   END
 `;
@@ -126,14 +127,17 @@ export class TrackerService {
       args.push(`-${days} days`);
     }
 
+    // Mirrors hunter/funnel.py: generated = ats_status has a digit and a '%'
+    // (a real score, not SKIP/FAIL/MANUAL/EXPIRED/blank); sent = sent column
+    // isn't one of the "not actually sent" placeholder values.
     const row = this.db
       .prepare(
         `SELECT
           COUNT(*) as tracked,
-          SUM(CASE WHEN folder != '' THEN 1 ELSE 0 END) as generated,
-          SUM(CASE WHEN sent != '' AND sent != 'EXPIRED' THEN 1 ELSE 0 END) as sent,
-          SUM(CASE WHEN confirmation != '' THEN 1 ELSE 0 END) as confirmed,
-          SUM(CASE WHEN answer != '' THEN 1 ELSE 0 END) as answered
+          SUM(CASE WHEN ats_status GLOB '*[0-9]*' AND instr(ats_status, '%') > 0 THEN 1 ELSE 0 END) as generated,
+          SUM(CASE WHEN LOWER(TRIM(sent)) NOT IN ('', '—', '–', '-', 'expired') THEN 1 ELSE 0 END) as sent,
+          SUM(CASE WHEN TRIM(confirmation) != '' THEN 1 ELSE 0 END) as confirmed,
+          SUM(CASE WHEN TRIM(answer) != '' THEN 1 ELSE 0 END) as answered
         FROM applications ${where}`,
       )
       .get(...args) as FunnelData;
