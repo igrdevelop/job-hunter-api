@@ -7,9 +7,5 @@ export class UpdateApplicationDto {
 
   @IsOptional()
   @IsString()
-  to_learn?: string;
-
-  @IsOptional()
-  @IsString()
-  reapplication?: string;
+  toLearn?: string;
 }

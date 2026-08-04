@@ -6,6 +6,7 @@ import {
   ApplicationStatus,
   QueryApplicationsDto,
   SortableColumn,
+  SORT_COLUMN_MAP,
 } from './dto/query.dto';
 
 export interface PaginatedResult<T> {
@@ -25,11 +26,6 @@ export interface FunnelData {
   answered: number;
 }
 
-const APPLICATION_COLUMNS = `
-  id, date, company, title, stack, ats_status, url, folder,
-  sent, reapplication, to_learn, cost_usd, ats_verdict
-`;
-
 // Bot doesn't store a status column — derive one from ats_status/sent so
 // filtering and stats can bucket applications the way the frontend needs.
 // "sent" here mirrors hunter/funnel.py's _is_sent() non-sent value set.
@@ -41,6 +37,15 @@ const STATUS_CASE = `
     WHEN LOWER(TRIM(sent)) NOT IN ('', '—', '–', '-', 'expired') THEN 'sent'
     ELSE 'applied'
   END
+`;
+
+// Aliased to the camelCase wire contract — snake_case stays confined to
+// the bot's tracker.db schema, never leaks past this service.
+const APPLICATION_COLUMNS = `
+  id, date, company, title, stack,
+  ats_status as atsStatus, url, folder, sent,
+  to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict,
+  (${STATUS_CASE}) as status
 `;
 
 @Injectable()
@@ -56,6 +61,7 @@ export class TrackerService {
     const page = params.page ?? 1;
     const limit = params.limit ?? 50;
     const sort: SortableColumn = params.sort ?? 'date';
+    const sortColumn = SORT_COLUMN_MAP[sort];
     const order = params.order === 'asc' ? 'ASC' : 'DESC';
 
     const where: string[] = [];
@@ -80,7 +86,7 @@ export class TrackerService {
 
     const data = this.db
       .prepare(
-        `SELECT ${APPLICATION_COLUMNS} FROM applications ${whereSql} ORDER BY ${sort} ${order} LIMIT ? OFFSET ?`,
+        `SELECT ${APPLICATION_COLUMNS} FROM applications ${whereSql} ORDER BY ${sortColumn} ${order} LIMIT ? OFFSET ?`,
       )
       .all(...args, limit, (page - 1) * limit) as Application[];
 
@@ -159,13 +165,9 @@ export class TrackerService {
     this.updateField(id, 'to_learn', toLearn);
   }
 
-  updateReapplication(id: string, value: string): void {
-    this.updateField(id, 'reapplication', value);
-  }
-
   private updateField(
     id: string,
-    column: 'sent' | 'to_learn' | 'reapplication',
+    column: 'sent' | 'to_learn',
     value: string,
   ): void {
     const result = this.db
