@@ -14,8 +14,12 @@ Reads the Python bot's `tracker.db` and serves files from `Applications/`.
 - **Owner:** Ihar Petrasheuski — Senior Frontend Developer (Angular, 10+ yrs), Wrocław, PL.
   Learning NestJS with this project.
 - **Live URL:** https://job-hunter.igrflex.work
-- **Current state:** not yet created. Setup instructions in `docs/SETUP.md`,
-  implementation plan in `docs/IMPLEMENTATION_PLAN.md`.
+- **Current state:** A0-A4 implemented and manually verified against real
+  tracker.db data (config, health, static+SPA fallback, auth, applications,
+  files, analytics). Not yet deployed — no GitHub repo pushed yet, Docker/
+  Cloudflare Tunnel steps (A0.4-A0.6) not done. See `docs/SETUP.md` and
+  `docs/IMPLEMENTATION_PLAN.md` for the original plan (a few corrections were
+  needed vs. the plan — see Agent Work Log below).
 
 ---
 
@@ -99,7 +103,7 @@ GET  /auth/me              (JWT) → { id, email }
 
 # Applications (JWT required)
 GET    /api/applications        ?page=&limit=&sort=&order=&status=&search=
-GET    /api/applications/stats  → { total, applied, sent, failed, expired }
+GET    /api/applications/stats  → { total, applied, sent, failed, expired, pending }
 GET    /api/applications/funnel ?days=30
 GET    /api/applications/:id
 PATCH  /api/applications/:id    { sent?, to_learn?, reapplication? }
@@ -147,3 +151,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | Date | Agent | Work |
 |------|-------|------|
 | 2026-08-04 | opus | Created project structure: CLAUDE.md, docs/SETUP.md (scaffold instructions), docs/IMPLEMENTATION_PLAN.md (A0-A4 backend steps). Project not yet scaffolded — run SETUP.md first. |
+| 2026-08-04 | sonnet | Ran SETUP.md (scaffold, deps, .env) and A0-A4 of IMPLEMENTATION_PLAN.md. Corrections vs. the plan: (1) Nest 11's bundled path-to-regexp rejects `(.*)` wildcards — use `{*path}`; (2) the SPA-fallback middleware must be registered after `app.init()` or it shadows Nest's own routes (health/api/auth); (3) `hunter/funnel.py` (read from the sibling bot repo) shows "generated" means `ats_status` has a digit+`%`, not `folder != ''`, and `source_for_url()` is a real per-source domain table, not the loose guess in the plan's inferSource stub — both fixed in `TrackerService`/`AnalyticsService` to match. GitHub repo creation (SETUP.md Step 1) and Docker/Cloudflare Tunnel deploy (A0.4-A0.6) still pending — skipped per user choice for now. Test fixtures added: `test/fixtures/tracker.db` (real 14-row DB, copied with user approval) and `test/fixtures/Applications/` (synthetic folder tree, not real CVs). |
