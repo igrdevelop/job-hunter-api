@@ -1,0 +1,82 @@
+name: Build and Deploy
+# Builds job-hunter-api together with job-hunter-site (as a named Docker
+# build context — job-hunter-site is public, no cross-repo token needed),
+# pushes to GHCR, then deploys only the job-hunter-api service on the VPS.
+# Never touches the bot's own job-hunter container.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  build-and-deploy:
+    needs: [test]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout job-hunter-api
+        uses: actions/checkout@v4
+        with:
+          path: job-hunter-api
+
+      - name: Checkout job-hunter-site (public — no token needed)
+        uses: actions/checkout@v4
+        with:
+          repository: igrdevelop/job-hunter-site
+          path: job-hunter-site
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: job-hunter-api
+          build-contexts: |
+            frontend=job-hunter-site
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Deploy to VPS
+        if: github.ref == 'refs/heads/master'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ${{ secrets.VPS_WORK_DIR }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose pull job-hunter-api
+            docker compose up -d job-hunter-api
+            docker image prune -f
