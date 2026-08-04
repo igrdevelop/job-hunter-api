@@ -7,6 +7,7 @@ import { ApplicationsModule } from './applications/applications.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt.guard';
 import configuration from './config/configuration';
+import { FilesModule } from './files/files.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { HealthModule } from './health/health.module';
     AuthModule,
     HealthModule,
     ApplicationsModule,
+    FilesModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
