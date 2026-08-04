@@ -45,7 +45,9 @@ export class AnalyticsService {
     private readonly tracker: TrackerService,
   ) {
     this.db = new Database(this.config.get<string>('tracker.dbPath')!);
+    // Same concurrent-access settings as TrackerService (shared bot DB file).
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('busy_timeout = 5000');
   }
 
   getFunnel(days?: number): FunnelData {

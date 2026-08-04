@@ -3,8 +3,9 @@
 # the VPS host. This file is written by job-hunter-api's deploy.yml only —
 # job-hunter-site's deploy.yml pulls/restarts just the `frontend` service
 # against whatever is here, it never rewrites the file itself.
-# Data is mounted from ./data/ (currently the test fixtures, not the bot's
-# live tracker.db — see docs/ for the cutover plan).
+# Data bind-mounts the bot's live files from its separate compose project
+# (/home/deploy/job-hunter/). tracker.db is rw so PATCH can update
+# sent/to_learn; Applications/ stays read-only.
 services:
   job-hunter-api:
     image: ghcr.io/igrdevelop/job-hunter-api:${IMAGE_TAG:-latest}
@@ -19,8 +20,8 @@ services:
       TRACKER_DB_PATH: /app/data/tracker.db
       FILES_PATH: /app/data/Applications
     volumes:
-      - ./data/tracker.db:/app/data/tracker.db
-      - ./data/Applications:/app/data/Applications:ro
+      - /home/deploy/job-hunter/tracker.db:/app/data/tracker.db
+      - /home/deploy/job-hunter/Applications:/app/data/Applications:ro
     logging:
       driver: "json-file"
       options:
