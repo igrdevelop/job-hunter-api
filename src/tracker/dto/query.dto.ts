@@ -26,16 +26,8 @@ export const SORT_COLUMN_MAP: Record<SortableColumn, string> = {
   atsVerdict: 'ats_verdict',
 };
 
-export const APPLICATION_STATUSES = [
-  'applied',
-  'sent',
-  'failed',
-  'expired',
-  'pending',
-  // Filter-only: empty/placeholder `sent` (not a derived STATUS_CASE bucket).
-  'unsent',
-] as const;
-export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
+export const SENT_FILTERS = ['unsent', 'filled'] as const;
+export type SentFilter = (typeof SENT_FILTERS)[number];
 
 export class QueryApplicationsDto {
   @IsOptional()
@@ -60,8 +52,8 @@ export class QueryApplicationsDto {
   order?: 'asc' | 'desc';
 
   @IsOptional()
-  @IsIn(APPLICATION_STATUSES)
-  status?: ApplicationStatus;
+  @IsIn(SENT_FILTERS)
+  status?: SentFilter;
 
   @IsOptional()
   @IsString()

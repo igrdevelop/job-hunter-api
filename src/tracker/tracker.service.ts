@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import Database from 'better-sqlite3';
 import { Application } from './dto/application.dto';
 import {
-  ApplicationStatus,
   QueryApplicationsDto,
   SortableColumn,
   SORT_COLUMN_MAP,
@@ -14,9 +13,11 @@ export interface PaginatedResult<T> {
   meta: { page: number; limit: number; total: number; totalPages: number };
 }
 
-export type ApplicationStats = Record<ApplicationStatus, number> & {
+export interface ApplicationStats {
   total: number;
-};
+  unsent: number;
+  filled: number;
+}
 
 export interface FunnelData {
   tracked: number;
@@ -26,30 +27,13 @@ export interface FunnelData {
   answered: number;
 }
 
-// Bot doesn't store a status column — derive one from ats_status/sent so
-// filtering and stats can bucket applications the way the frontend needs.
-// "sent" here mirrors hunter/funnel.py's _is_sent() non-sent value set.
-const STATUS_CASE = `
-  CASE
-    WHEN LOWER(TRIM(sent)) = 'expired' OR ats_status = 'EXPIRED' THEN 'expired'
-    WHEN ats_status = 'FAIL' OR ats_status = 'SKIP' THEN 'failed'
-    WHEN ats_status = '' OR ats_status = '—' OR ats_status = 'MANUAL' THEN 'pending'
-    WHEN LOWER(TRIM(sent)) NOT IN ('', '—', '–', '-', 'expired') THEN 'sent'
-    ELSE 'applied'
-  END
-`;
+const UNSENT_SQL = `LOWER(TRIM(sent)) IN ('', '—', '–', '-')`;
+const FILLED_SQL = `LOWER(TRIM(sent)) NOT IN ('', '—', '–', '-')`;
 
-// Placeholder / empty sent values — same set STATUS_CASE treats as "not sent"
-// (excluding 'expired', which is its own terminal status).
-const UNSENT_SENT_SQL = `LOWER(TRIM(sent)) IN ('', '—', '–', '-')`;
-
-// Aliased to the camelCase wire contract — snake_case stays confined to
-// the bot's tracker.db schema, never leaks past this service.
 const APPLICATION_COLUMNS = `
   id, date, company, title, stack,
   ats_status as atsStatus, url, folder, sent,
-  to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict,
-  (${STATUS_CASE}) as status
+  to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict
 `;
 
 @Injectable()
@@ -76,11 +60,9 @@ export class TrackerService {
     const args: unknown[] = [];
 
     if (params.status === 'unsent') {
-      // `unsent` is a filter over the raw `sent` column, not a STATUS_CASE bucket.
-      where.push(UNSENT_SENT_SQL);
-    } else if (params.status) {
-      where.push(`(${STATUS_CASE}) = ?`);
-      args.push(params.status);
+      where.push(UNSENT_SQL);
+    } else if (params.status === 'filled') {
+      where.push(FILLED_SQL);
     }
     if (params.search) {
       where.push('(company LIKE ? OR title LIKE ?)');
@@ -115,32 +97,21 @@ export class TrackerService {
   }
 
   getStats(): ApplicationStats {
-    const rows = this.db
+    const row = this.db
       .prepare(
-        `SELECT (${STATUS_CASE}) as status, COUNT(*) as c FROM applications GROUP BY status`,
+        `SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN ${UNSENT_SQL} THEN 1 ELSE 0 END) as unsent,
+          SUM(CASE WHEN ${FILLED_SQL} THEN 1 ELSE 0 END) as filled
+        FROM applications`,
       )
-      .all() as { status: ApplicationStatus; c: number }[];
+      .get() as ApplicationStats;
 
-    const stats: ApplicationStats = {
-      total: 0,
-      applied: 0,
-      sent: 0,
-      failed: 0,
-      expired: 0,
-      pending: 0,
-      unsent: 0,
+    return {
+      total: row.total ?? 0,
+      unsent: row.unsent ?? 0,
+      filled: row.filled ?? 0,
     };
-    for (const row of rows) {
-      stats[row.status] = row.c;
-      stats.total += row.c;
-    }
-    // Overlaps applied/pending/failed — intentional (filter-only status).
-    stats.unsent = (
-      this.db
-        .prepare(`SELECT COUNT(*) c FROM applications WHERE ${UNSENT_SENT_SQL}`)
-        .get() as { c: number }
-    ).c;
-    return stats;
   }
 
   getFunnel(days?: number): FunnelData {
