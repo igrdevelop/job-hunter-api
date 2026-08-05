@@ -33,6 +33,7 @@ Cloudflare Tunnel (job-hunter.igrflex.work, path routing)
 │     ├── /api/generated/* → GeneratedModule (Applications/ date/company tree)
 │     ├── /api/templates/* → TemplatesModule (stored under candidate/templates/)
 │     ├── /api/analytics/* → AnalyticsModule (funnel, cost, stats)
+│     ├── /api/settings    → SettingsModule (read-only bot .env, secrets masked)
 │     └── /health          → Health check
 └── everything else → job-hunter-frontend container (nginx, job-hunter-site repo)
 ```
@@ -53,6 +54,7 @@ service against it).
 - `tracker.db` — read-write (bot writes applications, NestJS edits 3 fields)
 - `Applications/` — read-only (bot writes generated CVs, NestJS serves via `/api/generated`)
 - `candidate/` — read-write (bot personal assets; NestJS serves/uploads via `/api/files` + templates)
+- `.env` — read-only (bot config; NestJS serves masked via `/api/settings`, `BOT_ENV_PATH`)
 
 ---
 
@@ -106,6 +108,7 @@ the sole owner/writer of that compose file.
 | `JWT_SECRET` | yes | Secret for JWT signing (64+ chars) |
 | `TRACKER_DB_PATH` | no | Path to bot's tracker.db (default: `./data/tracker.db`) |
 | `FILES_PATH` | no | Path to bot's Applications/ (default: `./data/Applications`) |
+| `CANDIDATE_PATH` | no | Path to candidate/ assets folder (default: `./data/candidate`) |
 | `SEED_USER_EMAIL` | no | Owner email, seeded on first start |
 | `SEED_USER_PASSWORD` | no | Owner password, seeded on first start |
 
@@ -126,11 +129,23 @@ GET    /api/applications/funnel ?days=30
 GET    /api/applications/:id
 PATCH  /api/applications/:id    { sent?, to_learn?, reapplication? }
 
-# Files (JWT required)
-GET /api/files                        → date folders
-GET /api/files/:date                  → company folders
-GET /api/files/:date/:company         → file list
-GET /api/files/:date/:company/:file   → download/stream
+# Candidate files (JWT required) — browse/upload candidate/ folder
+GET  /api/files                       → list candidate/ root (base_cv_*.md, candidate.yaml, ...)
+GET  /api/files/{*path}               → list subdir or stream file (auto-detect)
+POST /api/files                       → upload to root (?path= optional)
+POST /api/files/{*path}               → upload into sub-path
+
+# Generated applications (JWT required) — browse Applications/{date}/{company}/
+GET /api/generated                    → date folders
+GET /api/generated/:date              → company folders under a date
+GET /api/generated/:date/:company     → file list in a company folder
+GET /api/generated/:date/:company/:file → download/stream a file
+
+# Templates (JWT required) — uploaded doc templates under candidate/templates/
+GET    /api/templates                 → list all (?category= filter)
+GET    /api/templates/:id/content     → download a template file
+POST   /api/templates                 → upload (multipart: file + name + category + description)
+DELETE /api/templates/:id             → remove a template
 
 # Analytics (JWT required)
 GET /api/analytics/funnel?days=30
@@ -176,3 +191,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-08-04 | grok | Cut over `docker-compose.prod.yml` volumes from `./data/` test fixtures to the bot's live paths (`/home/deploy/job-hunter/tracker.db` rw, `Applications/` ro). Added `pragma('busy_timeout = 5000')` beside existing WAL mode in `TrackerService`/`AnalyticsService` so concurrent bot writes don't fail PATCH with immediate SQLITE_BUSY. |
 | 2026-08-04 | grok | Added `unsent` to `APPLICATION_STATUSES` and special-cased `?status=unsent` to filter empty/placeholder `sent` (same placeholders as STATUS_CASE). Stats now include `unsent` count. Fixes frontend default filter 400. |
 | 2026-08-04 | grok | Split file browsing: `/api/files` → `candidate/` (list/upload), `/api/generated` → Applications date/company tree, `/api/templates` persists under `candidate/templates/`. Mounted `candidate/` rw in compose. |
+| 2026-08-05 | grok | Added read-only Settings: `GET /api/settings` reads bot `.env` via `BOT_ENV_PATH` (default `./data/.env`), hardcoded schema from `hunter/config.py` (~85 vars / 17 categories), secrets masked server-side. |

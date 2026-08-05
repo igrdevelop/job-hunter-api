@@ -6,7 +6,8 @@
 # Data bind-mounts the bot's live files from its separate compose project
 # (/home/deploy/job-hunter/). tracker.db is rw so PATCH can update
 # sent/to_learn; Applications/ stays read-only; candidate/ is rw so the
-# web UI can upload templates / personal files into the same tree the bot reads.
+# web UI can upload templates / personal files into the same tree the bot reads;
+# .env is read-only for the Settings page.
 services:
   job-hunter-api:
     image: ghcr.io/igrdevelop/job-hunter-api:${IMAGE_TAG:-latest}
@@ -21,10 +22,12 @@ services:
       TRACKER_DB_PATH: /app/data/tracker.db
       FILES_PATH: /app/data/Applications
       CANDIDATE_PATH: /app/data/candidate
+      BOT_ENV_PATH: /app/data/.env
     volumes:
       - /home/deploy/job-hunter/tracker.db:/app/data/tracker.db
       - /home/deploy/job-hunter/Applications:/app/data/Applications:ro
       - /home/deploy/job-hunter/candidate:/app/data/candidate
+      - /home/deploy/job-hunter/.env:/app/data/.env:ro
     logging:
       driver: "json-file"
       options:
