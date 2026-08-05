@@ -9,6 +9,7 @@ import configuration from './config/configuration';
 import { FilesModule } from './files/files.module';
 import { GeneratedModule } from './generated/generated.module';
 import { HealthModule } from './health/health.module';
+import { SettingsModule } from './settings/settings.module';
 import { TemplatesModule } from './templates/templates.module';
 
 @Module({
@@ -21,6 +22,7 @@ import { TemplatesModule } from './templates/templates.module';
     GeneratedModule,
     TemplatesModule,
     AnalyticsModule,
+    SettingsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })
