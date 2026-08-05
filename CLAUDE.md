@@ -29,7 +29,9 @@ Cloudflare Tunnel (job-hunter.igrflex.work, path routing)
 ├── /api/*, /auth/* → job-hunter-api container, NestJS :3000
 │     ├── /auth/*          → AuthModule (register, login, JWT)
 │     ├── /api/applications/* → ApplicationsModule (tracker.db CRUD)
-│     ├── /api/files/*     → FilesModule (serve Applications/ folder)
+│     ├── /api/files/*     → FilesModule (browse/upload candidate/)
+│     ├── /api/generated/* → GeneratedModule (Applications/ date/company tree)
+│     ├── /api/templates/* → TemplatesModule (stored under candidate/templates/)
 │     ├── /api/analytics/* → AnalyticsModule (funnel, cost, stats)
 │     └── /health          → Health check
 └── everything else → job-hunter-frontend container (nginx, job-hunter-site repo)
@@ -49,7 +51,8 @@ service against it).
 
 **Shared Docker volumes with Python bot:**
 - `tracker.db` — read-write (bot writes applications, NestJS edits 3 fields)
-- `Applications/` — read-only (bot writes generated CVs, NestJS serves them)
+- `Applications/` — read-only (bot writes generated CVs, NestJS serves via `/api/generated`)
+- `candidate/` — read-write (bot personal assets; NestJS serves/uploads via `/api/files` + templates)
 
 ---
 
@@ -172,3 +175,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-08-04 | sonnet | Split the combined image into two independently deployable services. Removed the frontend build stage from `Dockerfile` (no more `--build-context`/checkout of `job-hunter-site`), removed `ServeStaticModule` from `app.module.ts` and the SPA-fallback middleware + manual `app.init()` from `main.ts`, dropped the now-unused `@nestjs/serve-static` dependency. `deploy.yml` no longer checks out `job-hunter-site`; it remains the sole writer of `docker-compose.prod.yml` (now also backs it up to `.bak` before overwriting), which gained a `frontend` service for `job-hunter-site`'s own image. Cloudflare Tunnel route needs a manual dashboard update (path-route `/api`+`/auth` to this container, catch-all to `job-hunter-frontend`) — not automatable from here, no Tunnel-scoped API credentials available. |
 | 2026-08-04 | grok | Cut over `docker-compose.prod.yml` volumes from `./data/` test fixtures to the bot's live paths (`/home/deploy/job-hunter/tracker.db` rw, `Applications/` ro). Added `pragma('busy_timeout = 5000')` beside existing WAL mode in `TrackerService`/`AnalyticsService` so concurrent bot writes don't fail PATCH with immediate SQLITE_BUSY. |
 | 2026-08-04 | grok | Added `unsent` to `APPLICATION_STATUSES` and special-cased `?status=unsent` to filter empty/placeholder `sent` (same placeholders as STATUS_CASE). Stats now include `unsent` count. Fixes frontend default filter 400. |
+| 2026-08-04 | grok | Split file browsing: `/api/files` → `candidate/` (list/upload), `/api/generated` → Applications date/company tree, `/api/templates` persists under `candidate/templates/`. Mounted `candidate/` rw in compose. |
