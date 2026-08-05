@@ -39,6 +39,10 @@ const STATUS_CASE = `
   END
 `;
 
+// Placeholder / empty sent values — same set STATUS_CASE treats as "not sent"
+// (excluding 'expired', which is its own terminal status).
+const UNSENT_SENT_SQL = `LOWER(TRIM(sent)) IN ('', '—', '–', '-')`;
+
 // Aliased to the camelCase wire contract — snake_case stays confined to
 // the bot's tracker.db schema, never leaks past this service.
 const APPLICATION_COLUMNS = `
@@ -71,7 +75,10 @@ export class TrackerService {
     const where: string[] = [];
     const args: unknown[] = [];
 
-    if (params.status) {
+    if (params.status === 'unsent') {
+      // `unsent` is a filter over the raw `sent` column, not a STATUS_CASE bucket.
+      where.push(UNSENT_SENT_SQL);
+    } else if (params.status) {
       where.push(`(${STATUS_CASE}) = ?`);
       args.push(params.status);
     }
@@ -121,11 +128,18 @@ export class TrackerService {
       failed: 0,
       expired: 0,
       pending: 0,
+      unsent: 0,
     };
     for (const row of rows) {
       stats[row.status] = row.c;
       stats.total += row.c;
     }
+    // Overlaps applied/pending/failed — intentional (filter-only status).
+    stats.unsent = (
+      this.db
+        .prepare(`SELECT COUNT(*) c FROM applications WHERE ${UNSENT_SENT_SQL}`)
+        .get() as { c: number }
+    ).c;
     return stats;
   }
 
