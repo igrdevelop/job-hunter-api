@@ -109,6 +109,7 @@ the sole owner/writer of that compose file.
 | `TRACKER_DB_PATH` | no | Path to bot's tracker.db (default: `./data/tracker.db`) |
 | `FILES_PATH` | no | Path to bot's Applications/ (default: `./data/Applications`) |
 | `CANDIDATE_PATH` | no | Path to candidate/ assets folder (default: `./data/candidate`) |
+| `BOT_ENV_PATH` | no | Path to bot `.env` for read-only Settings page (default: `./data/.env`) |
 | `SEED_USER_EMAIL` | no | Owner email, seeded on first start |
 | `SEED_USER_PASSWORD` | no | Owner password, seeded on first start |
 
@@ -152,6 +153,9 @@ GET /api/analytics/funnel?days=30
 GET /api/analytics/sources?days=30
 GET /api/analytics/cost?days=30
 GET /api/analytics/timeline?days=90
+
+# Settings (JWT required) — read-only bot .env (secrets masked)
+GET /api/settings → { categories: [{ name, icon, settings: [...] }] }
 
 # Health (public)
 GET /health → { status: "ok" }
