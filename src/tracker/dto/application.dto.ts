@@ -1,5 +1,3 @@
-import { ApplicationStatus } from './query.dto';
-
 export interface Application {
   id: string;
   date: string;
@@ -13,5 +11,4 @@ export interface Application {
   toLearn: string;
   costUsd: number | null;
   atsVerdict: number | null;
-  status: ApplicationStatus;
 }
