@@ -32,6 +32,8 @@ export const APPLICATION_STATUSES = [
   'failed',
   'expired',
   'pending',
+  // Filter-only: empty/placeholder `sent` (not a derived STATUS_CASE bucket).
+  'unsent',
 ] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 
