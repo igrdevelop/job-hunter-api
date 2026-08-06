@@ -4,11 +4,15 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
+import { runMigrations } from '../db/migrations';
 
 export interface User {
   id: string;
   email: string;
   password: string;
+  role: string;
+  email_verified: number;
+  disabled: number;
   created_at: string;
 }
 
@@ -17,6 +21,9 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    disabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
   )
 `;
@@ -31,6 +38,7 @@ export class UsersRepository {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(SCHEMA);
+    runMigrations(this.db);
   }
 
   count(): number {
