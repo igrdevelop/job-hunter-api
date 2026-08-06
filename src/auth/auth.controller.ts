@@ -13,7 +13,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
 interface AuthenticatedRequest extends Request {
-  user: { id: string; email: string };
+  user: { id: string; email: string; role: string };
 }
 
 @Controller('auth')
@@ -38,6 +38,6 @@ export class AuthController {
     if (!user) {
       throw new NotFoundException();
     }
-    return { id: user.id, email: user.email };
+    return { id: user.id, email: user.email, role: user.role, emailVerified: !!user.email_verified };
   }
 }

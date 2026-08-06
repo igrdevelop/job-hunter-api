@@ -67,4 +67,14 @@ export class UsersRepository {
       .run(id, email, hashedPassword);
     return this.findById(id)!;
   }
+
+  createAdmin(email: string, hashedPassword: string): User {
+    const id = randomUUID();
+    this.db
+      .prepare(
+        `INSERT INTO users (id, email, password, role, email_verified) VALUES (?, ?, ?, 'admin', 1)`,
+      )
+      .run(id, email, hashedPassword);
+    return this.findById(id)!;
+  }
 }

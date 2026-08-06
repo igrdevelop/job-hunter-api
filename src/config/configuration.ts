@@ -1,6 +1,9 @@
 export default () => ({
   jwt: { secret: process.env.JWT_SECRET },
-  app: { dbPath: process.env.APP_DB_PATH || './data/app.sqlite' },
+  app: {
+    dbPath: process.env.APP_DB_PATH || './data/app.sqlite',
+    registrationEnabled: process.env.REGISTRATION_ENABLED === 'true',
+  },
   tracker: { dbPath: process.env.TRACKER_DB_PATH || './data/tracker.db' },
   // Bot-generated CVs / cover letters (Applications/{date}/{company}/).
   files: { path: process.env.FILES_PATH || './data/Applications' },
