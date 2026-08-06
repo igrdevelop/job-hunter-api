@@ -19,11 +19,13 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       SEED_USER_EMAIL: ${SEED_USER_EMAIL}
       SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
+      APP_DB_PATH: /app/data/app/app.sqlite
       TRACKER_DB_PATH: /app/data/tracker.db
       FILES_PATH: /app/data/Applications
       CANDIDATE_PATH: /app/data/candidate
       BOT_ENV_PATH: /app/data/.env
     volumes:
+      - /home/deploy/job-hunter-web/app-data:/app/data/app
       - /home/deploy/job-hunter/tracker.db:/app/data/tracker.db
       - /home/deploy/job-hunter/Applications:/app/data/Applications:ro
       - /home/deploy/job-hunter/candidate:/app/data/candidate
