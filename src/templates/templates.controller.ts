@@ -9,6 +9,7 @@ import {
   Res,
   StreamableFile,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -16,6 +17,8 @@ import { createReadStream } from 'fs';
 import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { extname } from 'path';
+import { Public } from '../auth/decorators/public.decorator';
+import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
 import { TemplatesService } from './templates.service';
 import type { TemplateCategory } from './templates.service';
 
@@ -28,6 +31,8 @@ export class TemplatesController {
     return this.templates.list(category as TemplateCategory | undefined);
   }
 
+  @Public()
+  @UseGuards(DownloadAuthGuard)
   @Get(':id/content')
   content(
     @Param('id') id: string,

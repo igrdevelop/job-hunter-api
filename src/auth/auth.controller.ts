@@ -11,6 +11,8 @@ import { AuthService } from './auth.service';
 import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 
 interface AuthenticatedRequest extends Request {
   user: { id: string; email: string; role: string };
@@ -18,7 +20,11 @@ interface AuthenticatedRequest extends Request {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Public()
   @Post('register')
@@ -30,6 +36,15 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password);
+  }
+
+  @Get('download-token')
+  downloadToken(@Req() req: AuthenticatedRequest) {
+    const token = this.jwtService.sign(
+      { sub: req.user.id, email: req.user.email, role: req.user.role, aud: 'download' },
+      { secret: this.config.get<string>('jwt.secret'), expiresIn: '5m' },
+    );
+    return { token };
   }
 
   @Get('me')

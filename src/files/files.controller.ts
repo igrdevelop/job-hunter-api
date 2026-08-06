@@ -7,12 +7,15 @@ import {
   Res,
   StreamableFile,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { createReadStream } from 'fs';
 import type { Response } from 'express';
 import { memoryStorage } from 'multer';
+import { Public } from '../auth/decorators/public.decorator';
+import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
 import { FilesService } from './files.service';
 
 @Controller('files')
@@ -24,6 +27,8 @@ export class FilesController {
     return this.files.list('');
   }
 
+  @Public()
+  @UseGuards(DownloadAuthGuard)
   @Get('{*path}')
   listOrGet(
     @Param('path') path: string | string[],

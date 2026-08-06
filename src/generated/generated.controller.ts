@@ -1,6 +1,8 @@
-import { Controller, Get, Param, Res, StreamableFile } from '@nestjs/common';
+import { Controller, Get, Param, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import { createReadStream } from 'fs';
 import type { Response } from 'express';
+import { Public } from '../auth/decorators/public.decorator';
+import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
 import { GeneratedService } from './generated.service';
 
 @Controller('generated')
@@ -22,6 +24,8 @@ export class GeneratedController {
     return this.generated.listFiles(date, company);
   }
 
+  @Public()
+  @UseGuards(DownloadAuthGuard)
   @Get(':date/:company/:file')
   getFile(
     @Param('date') date: string,
