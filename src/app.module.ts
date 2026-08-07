@@ -11,6 +11,7 @@ import { GeneratedModule } from './generated/generated.module';
 import { HealthModule } from './health/health.module';
 import { SettingsModule } from './settings/settings.module';
 import { TemplatesModule } from './templates/templates.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { TemplatesModule } from './templates/templates.module';
     TemplatesModule,
     AnalyticsModule,
     SettingsModule,
+    UsersModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
 })

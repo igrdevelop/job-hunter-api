@@ -5,10 +5,8 @@ export default () => ({
     registrationEnabled: process.env.REGISTRATION_ENABLED === 'true',
   },
   tracker: { dbPath: process.env.TRACKER_DB_PATH || './data/tracker.db' },
-  // Bot-generated CVs / cover letters (Applications/{date}/{company}/).
-  files: { path: process.env.FILES_PATH || './data/Applications' },
-  // Personal candidate assets (YAML, base CV, notes) — also template uploads.
-  candidate: { path: process.env.CANDIDATE_PATH || './data/candidate' },
+  // Per-user storage root: users/{userId}/{candidate,Applications,templates}/
+  users: { root: process.env.USERS_ROOT || './data/users' },
   // Bot .env (read-only settings page). Mounted from the bot project in prod.
   bot: { envPath: process.env.BOT_ENV_PATH || './data/.env' },
   seed: {
