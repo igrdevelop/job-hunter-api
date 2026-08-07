@@ -15,6 +15,18 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS email_verification_tokens (
+          token      TEXT PRIMARY KEY,
+          user_id    TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
