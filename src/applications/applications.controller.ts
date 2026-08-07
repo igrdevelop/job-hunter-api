@@ -7,6 +7,8 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
 import { FunnelQueryDto } from '../tracker/dto/funnel-query.dto';
 import { QueryApplicationsDto } from '../tracker/dto/query.dto';
 import { UpdateApplicationDto } from '../tracker/dto/update.dto';
@@ -17,23 +19,23 @@ export class ApplicationsController {
   constructor(private readonly tracker: TrackerService) {}
 
   @Get()
-  list(@Query() query: QueryApplicationsDto) {
-    return this.tracker.getApplications(query);
+  list(@CurrentUser() user: CurrentUserData, @Query() query: QueryApplicationsDto) {
+    return this.tracker.getApplications(user.id, query);
   }
 
   @Get('stats')
-  stats() {
-    return this.tracker.getStats();
+  stats(@CurrentUser() user: CurrentUserData) {
+    return this.tracker.getStats(user.id);
   }
 
   @Get('funnel')
-  funnel(@Query() query: FunnelQueryDto) {
-    return this.tracker.getFunnel(query.days);
+  funnel(@CurrentUser() user: CurrentUserData, @Query() query: FunnelQueryDto) {
+    return this.tracker.getFunnel(user.id, query.days);
   }
 
   @Get(':id')
-  getOne(@Param('id') id: string) {
-    const application = this.tracker.getApplicationById(id);
+  getOne(@CurrentUser() user: CurrentUserData, @Param('id') id: string) {
+    const application = this.tracker.getApplicationById(user.id, id);
     if (!application) {
       throw new NotFoundException(`Application ${id} not found`);
     }
@@ -41,13 +43,17 @@ export class ApplicationsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateApplicationDto) {
+  update(
+    @CurrentUser() user: CurrentUserData,
+    @Param('id') id: string,
+    @Body() dto: UpdateApplicationDto,
+  ) {
     if (dto.sent !== undefined) {
-      this.tracker.updateSent(id, dto.sent);
+      this.tracker.updateSent(user.id, id, dto.sent);
     }
     if (dto.toLearn !== undefined) {
-      this.tracker.updateToLearn(id, dto.toLearn);
+      this.tracker.updateToLearn(user.id, id, dto.toLearn);
     }
-    return this.tracker.getApplicationById(id);
+    return this.tracker.getApplicationById(user.id, id);
   }
 }

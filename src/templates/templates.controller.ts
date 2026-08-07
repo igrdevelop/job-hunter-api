@@ -9,6 +9,7 @@ import {
   Res,
   StreamableFile,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -16,6 +17,10 @@ import { createReadStream } from 'fs';
 import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { extname } from 'path';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
+import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
 import { TemplatesService } from './templates.service';
 import type { TemplateCategory } from './templates.service';
 
@@ -24,17 +29,20 @@ export class TemplatesController {
   constructor(private readonly templates: TemplatesService) {}
 
   @Get()
-  list(@Query('category') category?: string) {
-    return this.templates.list(category as TemplateCategory | undefined);
+  list(@CurrentUser() user: CurrentUserData, @Query('category') category?: string) {
+    return this.templates.list(user.id, category as TemplateCategory | undefined);
   }
 
+  @Public()
+  @UseGuards(DownloadAuthGuard)
   @Get(':id/content')
   content(
+    @CurrentUser() user: CurrentUserData,
     @Param('id') id: string,
     @Res({ passthrough: true }) res: Response,
   ): StreamableFile {
-    const template = this.templates.get(id);
-    const path = this.templates.resolveContent(id);
+    const template = this.templates.get(user.id, id);
+    const path = this.templates.resolveContent(user.id, id);
     const inline = ['.pdf', '.txt', '.md', '.json', '.yaml', '.yml'].includes(
       extname(template.fileName).toLowerCase(),
     );
@@ -53,12 +61,13 @@ export class TemplatesController {
     }),
   )
   upload(
+    @CurrentUser() user: CurrentUserData,
     @UploadedFile() file: Express.Multer.File,
     @Body('name') name: string,
     @Body('category') category: string,
     @Body('description') description?: string,
   ) {
-    return this.templates.create(file, {
+    return this.templates.create(user.id, file, {
       name,
       category: category as TemplateCategory,
       description,
@@ -66,8 +75,8 @@ export class TemplatesController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    this.templates.remove(id);
+  remove(@CurrentUser() user: CurrentUserData, @Param('id') id: string) {
+    this.templates.remove(user.id, id);
     return { ok: true };
   }
 }

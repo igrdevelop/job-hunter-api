@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   OnModuleInit,
@@ -8,9 +9,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
+import { MailService } from '../mail/mail.service';
+import { UserPathsService } from '../users/user-paths.service';
 import { User, UsersRepository } from './user.db';
 
 const BCRYPT_ROUNDS = 12;
+const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -20,6 +25,8 @@ export class AuthService implements OnModuleInit {
     private readonly users: UsersRepository,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
+    private readonly userPaths: UserPathsService,
   ) {}
 
   async onModuleInit() {
@@ -31,16 +38,31 @@ export class AuthService implements OnModuleInit {
     if (!email || !password) {
       return;
     }
-    await this.register(email, password);
+    await this.registerOwner(email, password);
     this.logger.log(`Seeded owner account: ${email}`);
   }
 
   async register(email: string, password: string): Promise<{ id: string; email: string }> {
+    if (!this.config.get<boolean>('app.registrationEnabled')) {
+      throw new ForbiddenException('Registration is disabled');
+    }
     if (this.users.findByEmail(email)) {
       throw new ConflictException('Email already registered');
     }
     const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const user = this.users.create(email, hashed);
+    this.userPaths.ensureUserDirs(user.id);
+    await this.sendVerificationEmail(user);
+    return { id: user.id, email: user.email };
+  }
+
+  async registerOwner(email: string, password: string): Promise<{ id: string; email: string }> {
+    if (this.users.findByEmail(email)) {
+      throw new ConflictException('Email already registered');
+    }
+    const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const user = this.users.createAdmin(email, hashed);
+    this.userPaths.ensureUserDirs(user.id);
     return { id: user.id, email: user.email };
   }
 
@@ -49,8 +71,29 @@ export class AuthService implements OnModuleInit {
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
-    const accessToken = this.jwtService.sign({ sub: user.id, email: user.email });
+    if (user.disabled) {
+      throw new ForbiddenException('Account is disabled');
+    }
+    const accessToken = this.jwtService.sign({ sub: user.id, email: user.email, role: user.role });
     return { accessToken };
+  }
+
+  async verifyEmail(token: string): Promise<void> {
+    const userId = this.users.consumeVerificationToken(token);
+    if (!userId) {
+      throw new ForbiddenException('Invalid or expired verification token');
+    }
+    this.users.setEmailVerified(userId);
+  }
+
+  async resendVerification(email: string): Promise<void> {
+    const user = this.users.findByEmail(email);
+    if (!user || user.email_verified) {
+      // Silently succeed — don't leak whether an email exists or is verified.
+      return;
+    }
+    this.users.deleteVerificationTokensByUser(user.id);
+    await this.sendVerificationEmail(user);
   }
 
   async validateUser(email: string, password: string): Promise<User | null> {
@@ -64,5 +107,12 @@ export class AuthService implements OnModuleInit {
 
   findById(id: string): User | null {
     return this.users.findById(id) ?? null;
+  }
+
+  private async sendVerificationEmail(user: User): Promise<void> {
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + VERIFY_TOKEN_TTL_MS);
+    this.users.createVerificationToken(user.id, token, expiresAt);
+    await this.mail.sendVerification(user.email, token);
   }
 }

@@ -4,6 +4,9 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 
+// E2E must boot without a local .env (CI, fresh clones, worktrees).
+process.env.JWT_SECRET ??= 'e2e-test-secret-'.repeat(4);
+
 describe('AppModule (e2e)', () => {
   let app: INestApplication<App>;
 

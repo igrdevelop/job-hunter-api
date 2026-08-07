@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  OnModuleInit,
 } from '@nestjs/common';
 import {
   existsSync,
@@ -12,7 +11,7 @@ import {
   writeFileSync,
 } from 'fs';
 import { extname, join } from 'path';
-import { FilesService } from '../files/files.service';
+import { UserPathsService } from '../users/user-paths.service';
 
 export type TemplateCategory = 'resume' | 'cover-letter' | 'portfolio' | 'other';
 
@@ -39,41 +38,40 @@ const CATEGORIES = new Set<TemplateCategory>([
 ]);
 
 @Injectable()
-export class TemplatesService implements OnModuleInit {
-  private dir = '';
-  private manifestPath = '';
+export class TemplatesService {
+  constructor(private readonly userPaths: UserPathsService) {}
 
-  constructor(private readonly files: FilesService) {}
-
-  onModuleInit(): void {
-    this.dir = this.files.resolveWritablePath('templates');
-    this.manifestPath = join(this.dir, 'manifest.json');
-    mkdirSync(this.dir, { recursive: true });
-    if (!existsSync(this.manifestPath)) {
-      this.writeManifest({ templates: [] });
-    }
+  private dir(userId: string): string {
+    const d = this.userPaths.templatesDir(userId);
+    mkdirSync(d, { recursive: true });
+    return d;
   }
 
-  list(category?: TemplateCategory): Template[] {
-    const all = this.readManifest().templates;
+  private manifestPath(userId: string): string {
+    return join(this.dir(userId), 'manifest.json');
+  }
+
+  list(userId: string, category?: TemplateCategory): Template[] {
+    const all = this.readManifest(userId).templates;
     if (!category) return all;
     return all.filter((t) => t.category === category);
   }
 
-  get(id: string): Template {
-    const template = this.readManifest().templates.find((t) => t.id === id);
+  get(userId: string, id: string): Template {
+    const template = this.readManifest(userId).templates.find((t) => t.id === id);
     if (!template) throw new NotFoundException('Template not found');
     return template;
   }
 
-  resolveContent(id: string): string {
-    const template = this.get(id);
-    const path = join(this.dir, template.fileName);
+  resolveContent(userId: string, id: string): string {
+    const template = this.get(userId, id);
+    const path = join(this.dir(userId), template.fileName);
     if (!existsSync(path)) throw new NotFoundException('Template file missing');
     return path;
   }
 
   create(
+    userId: string,
     file: Express.Multer.File,
     meta: { name: string; category: TemplateCategory; description?: string },
   ): Template {
@@ -86,7 +84,7 @@ export class TemplatesService implements OnModuleInit {
     const id = crypto.randomUUID();
     const ext = extname(file.originalname).toLowerCase() || '.bin';
     const fileName = `${id}${ext}`;
-    const dest = join(this.dir, fileName);
+    const dest = join(this.dir(userId), fileName);
     writeFileSync(dest, file.buffer);
 
     const template: Template = {
@@ -100,32 +98,34 @@ export class TemplatesService implements OnModuleInit {
       fileName,
     };
 
-    const manifest = this.readManifest();
+    const manifest = this.readManifest(userId);
     manifest.templates.unshift(template);
-    this.writeManifest(manifest);
+    this.writeManifest(userId, manifest);
     return template;
   }
 
-  remove(id: string): void {
-    const manifest = this.readManifest();
+  remove(userId: string, id: string): void {
+    const manifest = this.readManifest(userId);
     const idx = manifest.templates.findIndex((t) => t.id === id);
     if (idx < 0) throw new NotFoundException('Template not found');
     const [removed] = manifest.templates.splice(idx, 1);
-    this.writeManifest(manifest);
-    const path = join(this.dir, removed.fileName);
+    this.writeManifest(userId, manifest);
+    const path = join(this.dir(userId), removed.fileName);
     if (existsSync(path)) unlinkSync(path);
   }
 
-  private readManifest(): Manifest {
+  private readManifest(userId: string): Manifest {
+    const mp = this.manifestPath(userId);
+    if (!existsSync(mp)) return { templates: [] };
     try {
-      return JSON.parse(readFileSync(this.manifestPath, 'utf8')) as Manifest;
+      return JSON.parse(readFileSync(mp, 'utf8')) as Manifest;
     } catch {
       return { templates: [] };
     }
   }
 
-  private writeManifest(manifest: Manifest): void {
-    writeFileSync(this.manifestPath, JSON.stringify(manifest, null, 2));
+  private writeManifest(userId: string, manifest: Manifest): void {
+    writeFileSync(this.manifestPath(userId), JSON.stringify(manifest, null, 2));
   }
 }
 
