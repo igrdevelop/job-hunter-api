@@ -7,12 +7,12 @@ import {
   Req,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 
 interface AuthenticatedRequest extends Request {
   user: { id: string; email: string; role: string };
@@ -36,6 +36,20 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password);
+  }
+
+  @Public()
+  @Post('verify')
+  async verify(@Body('token') token: string) {
+    await this.authService.verifyEmail(token);
+    return { ok: true };
+  }
+
+  @Public()
+  @Post('resend')
+  async resend(@Body('email') email: string) {
+    await this.authService.resendVerification(email);
+    return { ok: true };
   }
 
   @Get('download-token')
