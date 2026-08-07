@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { AuthModule } from './auth/auth.module';
@@ -20,6 +21,7 @@ import { UsersModule } from './users/users.module';
     ConfigModule.forRoot({ load: [configuration], isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
     AuthModule,
+    AdminModule,
     HealthModule,
     ApplicationsModule,
     FilesModule,
