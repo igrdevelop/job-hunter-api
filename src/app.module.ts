@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AdminModule } from './admin/admin.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ApplicationsModule } from './applications/applications.module';
@@ -35,7 +35,8 @@ import { UsersModule } from './users/users.module';
     MailModule,
   ],
   providers: [
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // ThrottlerGuard is NOT global: the SPA polls /api/* continuously and a
+    // global limit 429s normal browsing. Only AuthController is throttled.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
   ],
 })
