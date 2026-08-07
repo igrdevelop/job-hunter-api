@@ -20,7 +20,11 @@ services:
       SEED_USER_EMAIL: ${SEED_USER_EMAIL}
       SEED_USER_PASSWORD: ${SEED_USER_PASSWORD}
       APP_DB_PATH: /app/data/app/app.sqlite
-      TRACKER_DB_PATH: /app/data/tracker.db
+      # tracker.db is mounted via its parent DIRECTORY (db/) so the WAL
+      # sidecars (-wal/-shm) are shared with the bot container. A single-file
+      # bind mount gave each container its own sidecars over one main file —
+      # they diverged and corrupted the db (2026-08-07 incident).
+      TRACKER_DB_PATH: /app/data/db/tracker.db
       USERS_ROOT: /app/data/users
       BOT_ENV_PATH: /app/data/.env
       REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-false}
@@ -31,7 +35,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
     volumes:
       - /home/deploy/job-hunter-web/app-data:/app/data/app
-      - /home/deploy/job-hunter/tracker.db:/app/data/tracker.db
+      - /home/deploy/job-hunter/db:/app/data/db
       - /home/deploy/job-hunter/users:/app/data/users
       - /home/deploy/job-hunter/.env:/app/data/.env:ro
     logging:
