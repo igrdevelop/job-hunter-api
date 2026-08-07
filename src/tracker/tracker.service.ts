@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Database from 'better-sqlite3';
+import { runTrackerMigrations } from '../db/tracker-migrations';
 import { Application } from './dto/application.dto';
 import {
   QueryApplicationsDto,
@@ -38,26 +39,41 @@ const APPLICATION_COLUMNS = `
 
 @Injectable()
 export class TrackerService {
-  private readonly db: Database.Database;
+  readonly db: Database.Database;
 
   constructor(private readonly config: ConfigService) {
     this.db = new Database(this.config.get<string>('tracker.dbPath')!);
-    // Shared with the bot process on the same file — WAL for readers/writers
-    // concurrency; busy_timeout so a short bot write doesn't fail our PATCH
-    // with SQLITE_BUSY (better-sqlite3 default timeout is 0ms).
+    // Shared with the bot process — WAL for reader/writer concurrency;
+    // busy_timeout so a short bot write doesn't fail our PATCH with SQLITE_BUSY.
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
+
+    // Get owner id from app.sqlite for the backfill.
+    const appDbPath = this.config.get<string>('app.dbPath')!;
+    let ownerUserId = '';
+    try {
+      const appDb = new Database(appDbPath, { readonly: true });
+      const row = appDb
+        .prepare(`SELECT id FROM users WHERE role = 'admin' LIMIT 1`)
+        .get() as { id: string } | undefined;
+      appDb.close();
+      ownerUserId = row?.id ?? '';
+    } catch {
+      // app.sqlite may not exist yet on first boot; migration runs with empty owner id.
+    }
+
+    runTrackerMigrations(this.db, ownerUserId);
   }
 
-  getApplications(params: QueryApplicationsDto): PaginatedResult<Application> {
+  getApplications(userId: string, params: QueryApplicationsDto): PaginatedResult<Application> {
     const page = params.page ?? 1;
     const limit = params.limit ?? 50;
     const sort: SortableColumn = params.sort ?? 'date';
     const sortColumn = SORT_COLUMN_MAP[sort];
     const order = params.order === 'asc' ? 'ASC' : 'DESC';
 
-    const where: string[] = [];
-    const args: unknown[] = [];
+    const where: string[] = ['user_id = ?'];
+    const args: unknown[] = [userId];
 
     if (params.status === 'unsent') {
       where.push(UNSENT_SQL);
@@ -69,7 +85,7 @@ export class TrackerService {
       const term = `%${params.search}%`;
       args.push(term, term);
     }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const total = (
       this.db
@@ -89,23 +105,25 @@ export class TrackerService {
     };
   }
 
-  getApplicationById(id: string): Application | null {
+  getApplicationById(userId: string, id: string): Application | null {
     const row = this.db
-      .prepare(`SELECT ${APPLICATION_COLUMNS} FROM applications WHERE id = ?`)
-      .get(id) as Application | undefined;
+      .prepare(
+        `SELECT ${APPLICATION_COLUMNS} FROM applications WHERE id = ? AND user_id = ?`,
+      )
+      .get(id, userId) as Application | undefined;
     return row ?? null;
   }
 
-  getStats(): ApplicationStats {
+  getStats(userId: string): ApplicationStats {
     const row = this.db
       .prepare(
         `SELECT
           COUNT(*) as total,
           SUM(CASE WHEN ${UNSENT_SQL} THEN 1 ELSE 0 END) as unsent,
           SUM(CASE WHEN ${FILLED_SQL} THEN 1 ELSE 0 END) as filled
-        FROM applications`,
+        FROM applications WHERE user_id = ?`,
       )
-      .get() as ApplicationStats;
+      .get(userId) as ApplicationStats;
 
     return {
       total: row.total ?? 0,
@@ -114,17 +132,14 @@ export class TrackerService {
     };
   }
 
-  getFunnel(days?: number): FunnelData {
-    const args: unknown[] = [];
-    let where = '';
+  getFunnel(userId: string, days?: number): FunnelData {
+    const args: unknown[] = [userId];
+    let where = 'WHERE user_id = ?';
     if (days && days > 0) {
-      where = `WHERE date >= date('now', ?)`;
+      where += ` AND date >= date('now', ?)`;
       args.push(`-${days} days`);
     }
 
-    // Mirrors hunter/funnel.py: generated = ats_status has a digit and a '%'
-    // (a real score, not SKIP/FAIL/MANUAL/EXPIRED/blank); sent = sent column
-    // isn't one of the "not actually sent" placeholder values.
     const row = this.db
       .prepare(
         `SELECT
@@ -146,22 +161,23 @@ export class TrackerService {
     };
   }
 
-  updateSent(id: string, sent: string): void {
-    this.updateField(id, 'sent', sent);
+  updateSent(userId: string, id: string, sent: string): void {
+    this.updateField(userId, id, 'sent', sent);
   }
 
-  updateToLearn(id: string, toLearn: string): void {
-    this.updateField(id, 'to_learn', toLearn);
+  updateToLearn(userId: string, id: string, toLearn: string): void {
+    this.updateField(userId, id, 'to_learn', toLearn);
   }
 
   private updateField(
+    userId: string,
     id: string,
     column: 'sent' | 'to_learn',
     value: string,
   ): void {
     const result = this.db
-      .prepare(`UPDATE applications SET ${column} = ? WHERE id = ?`)
-      .run(value, id);
+      .prepare(`UPDATE applications SET ${column} = ? WHERE id = ? AND user_id = ?`)
+      .run(value, id, userId);
     if (result.changes === 0) {
       throw new NotFoundException(`Application ${id} not found`);
     }

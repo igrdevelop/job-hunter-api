@@ -24,7 +24,6 @@ export interface TimelinePoint {
   count: number;
 }
 
-// Same "not actually sent" placeholder values as hunter/funnel.py's _is_sent().
 const NON_SENT = new Set(['', '—', '–', '-', 'expired']);
 
 function isGenerated(atsStatus: string | null): boolean {
@@ -45,17 +44,16 @@ export class AnalyticsService {
     private readonly tracker: TrackerService,
   ) {
     this.db = new Database(this.config.get<string>('tracker.dbPath')!);
-    // Same concurrent-access settings as TrackerService (shared bot DB file).
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
   }
 
-  getFunnel(days?: number): FunnelData {
-    return this.tracker.getFunnel(days);
+  getFunnel(userId: string, days?: number): FunnelData {
+    return this.tracker.getFunnel(userId, days);
   }
 
-  getPerSource(days?: number): SourceStats[] {
-    const rows = this.dateFilteredRows(days, 'url, ats_status, sent, confirmation, answer') as {
+  getPerSource(userId: string, days?: number): SourceStats[] {
+    const rows = this.dateFilteredRows(userId, days, 'url, ats_status, sent, confirmation, answer') as {
       url: string;
       ats_status: string;
       sent: string;
@@ -90,8 +88,8 @@ export class AnalyticsService {
     );
   }
 
-  getCostSummary(days?: number): CostSummary {
-    const rows = this.dateFilteredRows(days, 'cost_usd') as {
+  getCostSummary(userId: string, days?: number): CostSummary {
+    const rows = this.dateFilteredRows(userId, days, 'cost_usd') as {
       cost_usd: number | null;
     }[];
     const withCost = rows.filter((row) => row.cost_usd !== null);
@@ -104,9 +102,9 @@ export class AnalyticsService {
     };
   }
 
-  getTimeline(days: number): TimelinePoint[] {
-    const args: unknown[] = [];
-    let where = `WHERE date != ''`;
+  getTimeline(userId: string, days: number): TimelinePoint[] {
+    const args: unknown[] = [userId];
+    let where = `WHERE user_id = ? AND date != ''`;
     if (days && days > 0) {
       where += ` AND date >= date('now', ?)`;
       args.push(`-${days} days`);
@@ -119,13 +117,14 @@ export class AnalyticsService {
   }
 
   private dateFilteredRows(
+    userId: string,
     days: number | undefined,
     columns: string,
   ): Record<string, unknown>[] {
-    const args: unknown[] = [];
-    let where = '';
+    const args: unknown[] = [userId];
+    let where = 'WHERE user_id = ?';
     if (days && days > 0) {
-      where = `WHERE date >= date('now', ?)`;
+      where += ` AND date >= date('now', ?)`;
       args.push(`-${days} days`);
     }
     return this.db
