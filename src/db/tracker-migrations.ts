@@ -14,7 +14,9 @@ export function runTrackerMigrations(
     }[]
   ).map((r) => r.name);
 
-  if (!cols.includes('user_id')) {
+  // The bot owns the applications table; on a fresh tracker.db it may not
+  // exist yet (PRAGMA returns no rows). Skip — this runs again on next start.
+  if (cols.length > 0 && !cols.includes('user_id')) {
     trackerDb.exec(
       `ALTER TABLE applications ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`,
     );

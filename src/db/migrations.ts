@@ -7,6 +7,11 @@ const MIGRATIONS: Migration[] = [
     version: 1,
     up(db) {
       // Add role/email_verified/disabled to users; promote existing rows to admin.
+      // A fresh DB already gets these columns from the base SCHEMA — skip then.
+      const cols = (
+        db.prepare('PRAGMA table_info(users)').all() as { name: string }[]
+      ).map((r) => r.name);
+      if (cols.includes('role')) return;
       db.exec(`
         ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';
         ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0;
