@@ -106,10 +106,17 @@ the sole owner/writer of that compose file.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `JWT_SECRET` | yes | Secret for JWT signing (64+ chars) |
+| `APP_DB_PATH` | no | Path to app.sqlite (default: `./data/app.sqlite`) |
 | `TRACKER_DB_PATH` | no | Path to bot's tracker.db (default: `./data/tracker.db`) |
-| `FILES_PATH` | no | Path to bot's Applications/ (default: `./data/Applications`) |
-| `CANDIDATE_PATH` | no | Path to candidate/ assets folder (default: `./data/candidate`) |
+| `USERS_ROOT` | no | Per-user storage root (default: `./data/users`) |
 | `BOT_ENV_PATH` | no | Path to bot `.env` for read-only Settings page (default: `./data/.env`) |
+| `REGISTRATION_ENABLED` | no | Allow public registration (default: `false`) |
+| `SMTP_HOST` | no | SMTP host for email verification (unset = log links to console) |
+| `SMTP_PORT` | no | SMTP port (default: `587`) |
+| `SMTP_USER` | no | SMTP auth user |
+| `SMTP_PASS` | no | SMTP auth password |
+| `SMTP_FROM` | no | From address for emails |
+| `APP_BASE_URL` | no | Base URL for email links (default: `https://job-hunter.igrflex.work`) |
 | `SEED_USER_EMAIL` | no | Owner email, seeded on first start |
 | `SEED_USER_PASSWORD` | no | Owner password, seeded on first start |
 
@@ -118,44 +125,60 @@ the sole owner/writer of that compose file.
 ## API endpoints
 
 ```
-# Auth (public)
-POST /auth/register        { email, password } → { id, email }
+# Auth (public, rate-limited: 10/min per IP)
+POST /auth/register        { email, password } → { id, email }   (gated by REGISTRATION_ENABLED)
 POST /auth/login           { email, password } → { access_token }
-GET  /auth/me              (JWT) → { id, email }
+POST /auth/verify          { token }           → { ok: true }
+POST /auth/resend          { email }           → { ok: true }
 
-# Applications (JWT required)
+# Auth (JWT required)
+GET  /auth/me              → { id, email, role, emailVerified }
+GET  /auth/download-token  → { token }  (5-min aud='download' JWT for window.open)
+
+# Applications (JWT required, user-scoped)
 GET    /api/applications        ?page=&limit=&sort=&order=&status=&search=
-GET    /api/applications/stats  → { total, applied, sent, failed, expired, pending }
+GET    /api/applications/stats  → { total, unsent, filled }
 GET    /api/applications/funnel ?days=30
 GET    /api/applications/:id
-PATCH  /api/applications/:id    { sent?, to_learn?, reapplication? }
+PATCH  /api/applications/:id    { sent?, toLearn? }
 
-# Candidate files (JWT required) — browse/upload candidate/ folder
-GET  /api/files                       → list candidate/ root (base_cv_*.md, candidate.yaml, ...)
-GET  /api/files/{*path}               → list subdir or stream file (auto-detect)
+# Candidate files (JWT or ?dt= download token) — browse/upload users/{id}/candidate/
+GET  /api/files                       → list root
+GET  /api/files/{*path}               → list subdir or stream file
 POST /api/files                       → upload to root (?path= optional)
 POST /api/files/{*path}               → upload into sub-path
 
-# Generated applications (JWT required) — browse Applications/{date}/{company}/
+# Generated applications (JWT or ?dt=) — browse users/{id}/Applications/
 GET /api/generated                    → date folders
-GET /api/generated/:date              → company folders under a date
-GET /api/generated/:date/:company     → file list in a company folder
+GET /api/generated/:date              → company folders
+GET /api/generated/:date/:company     → file list
 GET /api/generated/:date/:company/:file → download/stream a file
 
-# Templates (JWT required) — uploaded doc templates under candidate/templates/
+# Templates (JWT or ?dt=) — users/{id}/templates/
 GET    /api/templates                 → list all (?category= filter)
 GET    /api/templates/:id/content     → download a template file
 POST   /api/templates                 → upload (multipart: file + name + category + description)
 DELETE /api/templates/:id             → remove a template
 
-# Analytics (JWT required)
+# Analytics (JWT required, user-scoped)
 GET /api/analytics/funnel?days=30
 GET /api/analytics/sources?days=30
 GET /api/analytics/cost?days=30
 GET /api/analytics/timeline?days=90
 
-# Settings (JWT required) — read-only bot .env (secrets masked)
-GET /api/settings → { categories: [{ name, icon, settings: [...] }] }
+# Settings (JWT required)
+GET /api/settings          → { key: value, ... }  (per-user whitelisted keys)
+PUT /api/settings          { key: value, ... }     (upsert user_settings)
+GET /api/settings/global   → { categories: [...] } (admin only, masked bot .env)
+
+# Telegram (JWT required)
+POST /api/telegram/link-code → { code, expiresAt }  (6-char, 10-min)
+GET  /api/telegram/status    → { linked: boolean, chatId? }
+
+# Admin (JWT required, role=admin)
+GET    /api/admin/users
+PATCH  /api/admin/users/:id  { disabled: boolean }
+DELETE /api/admin/users/:id
 
 # Health (public)
 GET /health → { status: "ok" }
@@ -196,3 +219,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-08-04 | grok | Added `unsent` to `APPLICATION_STATUSES` and special-cased `?status=unsent` to filter empty/placeholder `sent` (same placeholders as STATUS_CASE). Stats now include `unsent` count. Fixes frontend default filter 400. |
 | 2026-08-04 | grok | Split file browsing: `/api/files` → `candidate/` (list/upload), `/api/generated` → Applications date/company tree, `/api/templates` persists under `candidate/templates/`. Mounted `candidate/` rw in compose. |
 | 2026-08-05 | grok | Added read-only Settings: `GET /api/settings` reads bot `.env` via `BOT_ENV_PATH` (default `./data/.env`), hardcoded schema from `hunter/config.py` (~85 vars / 17 categories), secrets masked server-side. |
+| 2026-08-07 | sonnet | Multi-user A1–A4: persist app.sqlite volume, versioned migration runner (001: role/email_verified/disabled, 002: email_verification_tokens), REGISTRATION_ENABLED gate, role system + RolesGuard, download-token flow (?dt= on stream endpoints), USERS_ROOT per-user storage (UserPathsService), refactored FilesService/GeneratedService/TemplatesService/TrackerService/AnalyticsService to take userId, tracker.db migrations (user_id column + indexes + user_settings/telegram tables), one-time VPS migration script, email verification (MailService, POST /auth/verify, POST /auth/resend), unverified-user 403 gate in JwtAuthGuard, rate limiting (@nestjs/throttler), admin module (GET/PATCH/DELETE /api/admin/users), per-user settings (GET/PUT /api/settings), global settings moved to /api/settings/global (admin only), Telegram link-code + status endpoints. |
