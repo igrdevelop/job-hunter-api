@@ -1,9 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { readdirSync, statSync, Stats } from 'fs';
 import { extname, join } from 'path';
 import { FileInfo, FolderInfo } from '../files/dto/folder-info.dto';
 import { safeJoin } from '../files/safe-path';
+import { UserPathsService } from '../users/user-paths.service';
 
 interface DirEntry {
   name: string;
@@ -29,30 +29,26 @@ const DEFAULT_CONTENT_TYPE = {
   inline: false,
 };
 
-/** Browse bot-generated Applications/{date}/{company}/ tree (read-only). */
+/** Browse user's Applications/{date}/{company}/ tree (read-only). */
 @Injectable()
 export class GeneratedService {
-  private readonly root: string;
+  constructor(private readonly userPaths: UserPathsService) {}
 
-  constructor(private readonly config: ConfigService) {
-    this.root = this.config.get<string>('files.path')!;
-  }
-
-  listDates(): FolderInfo[] {
-    return this.listDir(this.root)
+  listDates(userId: string): FolderInfo[] {
+    return this.listDir(this.userPaths.applicationsDir(userId))
       .filter((e) => e.isDirectory)
       .map((e) => this.toFolderInfo(e));
   }
 
-  listCompanies(date: string): FolderInfo[] {
-    const dir = safeJoin(this.root, date);
+  listCompanies(userId: string, date: string): FolderInfo[] {
+    const dir = safeJoin(this.userPaths.applicationsDir(userId), date);
     return this.listDir(dir)
       .filter((e) => e.isDirectory)
       .map((e) => this.toFolderInfo(e));
   }
 
-  listFiles(date: string, company: string): FileInfo[] {
-    const dir = safeJoin(this.root, date, company);
+  listFiles(userId: string, date: string, company: string): FileInfo[] {
+    const dir = safeJoin(this.userPaths.applicationsDir(userId), date, company);
     return this.listDir(dir).map((e) => ({
       name: e.name,
       size: e.isDirectory ? 0 : e.stat.size,
@@ -62,11 +58,12 @@ export class GeneratedService {
   }
 
   resolveFile(
+    userId: string,
     date: string,
     company: string,
     file: string,
   ): { path: string; contentType: string; inline: boolean } {
-    const path = safeJoin(this.root, date, company, file);
+    const path = safeJoin(this.userPaths.applicationsDir(userId), date, company, file);
     let stat: Stats;
     try {
       stat = statSync(path);
