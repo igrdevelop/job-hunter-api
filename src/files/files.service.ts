@@ -3,7 +3,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +12,7 @@ import {
   writeFileSync,
 } from 'fs';
 import { basename, extname, join } from 'path';
+import { UserPathsService } from '../users/user-paths.service';
 import { FileInfo, FolderInfo } from './dto/folder-info.dto';
 import { safeJoin } from './safe-path';
 
@@ -46,20 +46,14 @@ const DEFAULT_CONTENT_TYPE = {
   inline: false,
 };
 
-/** Browse + upload under the bot's candidate/ folder. */
+/** Browse + upload under a user's candidate/ folder. */
 @Injectable()
 export class FilesService {
-  private readonly root: string;
+  constructor(private readonly userPaths: UserPathsService) {}
 
-  constructor(private readonly config: ConfigService) {
-    this.root = this.config.get<string>('candidate.path')!;
-    if (!existsSync(this.root)) {
-      mkdirSync(this.root, { recursive: true });
-    }
-  }
-
-  list(relativePath = ''): CandidateEntry[] {
-    const dir = this.resolveDir(relativePath);
+  list(userId: string, relativePath = ''): CandidateEntry[] {
+    const root = this.userPaths.candidateDir(userId);
+    const dir = this.resolveDir(root, relativePath);
     return this.listDir(dir).map((e) =>
       e.isDirectory
         ? this.toFolderInfo(e)
@@ -72,13 +66,12 @@ export class FilesService {
     );
   }
 
-  resolveFile(relativePath: string): {
-    path: string;
-    contentType: string;
-    inline: boolean;
-    fileName: string;
-  } {
-    const path = this.resolveExisting(relativePath);
+  resolveFile(
+    userId: string,
+    relativePath: string,
+  ): { path: string; contentType: string; inline: boolean; fileName: string } {
+    const root = this.userPaths.candidateDir(userId);
+    const path = this.resolveExisting(root, relativePath);
     let stat: Stats;
     try {
       stat = statSync(path);
@@ -94,16 +87,18 @@ export class FilesService {
     return { path, contentType, inline, fileName };
   }
 
-  isDirectory(relativePath: string): boolean {
+  isDirectory(userId: string, relativePath: string): boolean {
     if (!relativePath) return true;
+    const root = this.userPaths.candidateDir(userId);
     try {
-      return statSync(this.resolveExisting(relativePath)).isDirectory();
+      return statSync(this.resolveExisting(root, relativePath)).isDirectory();
     } catch {
       return false;
     }
   }
 
   saveUpload(
+    userId: string,
     file: Express.Multer.File,
     relativeDir = '',
   ): FileInfo {
@@ -115,7 +110,8 @@ export class FilesService {
       throw new BadRequestException('Invalid file name');
     }
 
-    const dir = this.resolveDir(relativeDir);
+    const root = this.userPaths.candidateDir(userId);
+    const dir = this.resolveDir(root, relativeDir, true);
     mkdirSync(dir, { recursive: true });
     const dest = safeJoin(dir, safeName);
     writeFileSync(dest, file.buffer);
@@ -129,18 +125,10 @@ export class FilesService {
     };
   }
 
-  /** Absolute path under candidate root for template storage helpers. */
-  resolveWritablePath(...segments: string[]): string {
-    return safeJoin(this.root, ...segments);
-  }
-
-  getRoot(): string {
-    return this.root;
-  }
-
-  private resolveDir(relativePath: string): string {
+  private resolveDir(root: string, relativePath: string, create = false): string {
     const segments = this.splitPath(relativePath);
-    const dir = segments.length ? safeJoin(this.root, ...segments) : this.root;
+    const dir = segments.length ? safeJoin(root, ...segments) : root;
+    if (create) return dir;
     if (!existsSync(dir)) {
       throw new NotFoundException('Folder not found');
     }
@@ -150,12 +138,12 @@ export class FilesService {
     return dir;
   }
 
-  private resolveExisting(relativePath: string): string {
+  private resolveExisting(root: string, relativePath: string): string {
     const segments = this.splitPath(relativePath);
     if (!segments.length) {
       throw new BadRequestException('Invalid path');
     }
-    return safeJoin(this.root, ...segments);
+    return safeJoin(root, ...segments);
   }
 
   private splitPath(relativePath: string): string[] {
