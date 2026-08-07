@@ -23,6 +23,12 @@ services:
       TRACKER_DB_PATH: /app/data/tracker.db
       USERS_ROOT: /app/data/users
       BOT_ENV_PATH: /app/data/.env
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     volumes:
       - /home/deploy/job-hunter-web/app-data:/app/data/app
       - /home/deploy/job-hunter/tracker.db:/app/data/tracker.db
