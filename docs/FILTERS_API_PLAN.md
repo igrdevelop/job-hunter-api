@@ -1,6 +1,6 @@
 # FILTERS_API Plan — per-user job-filter endpoints
 
-**Status:** draft
+**Status:** M1–M3 done (2026-08-08)
 **Date:** 2026-08-08
 **Motivation:** companion to the bot repo's `docs/FILTERS_YAML_PLAN.md`
 (read it first — it defines the file format, the merge model and the page
@@ -122,19 +122,19 @@ or a test goes red on whichever side moved alone.
 
 ## Milestones
 
-- **M1** — `src/filters/filters-schema.ts` (key list + types + merge
+- **M1** ✅ — `src/filters/filters-schema.ts` (key list + types + merge
   strategies + builtin defaults, transcribed from the bot's
   `hunter/filter_profile.py::builtin_defaults()` the same way
   `settings-schema.ts` transcribes `hunter/config.py`) +
   `filters-validator.ts` + `test/fixtures/filters_contract_v1.json` +
   contract unit test. No HTTP yet. NOTE: coordinate with the bot repo —
   the fixture file must land there in the same window.
-- **M2** — `FiltersModule` (`filters.controller.ts`, `filters.service.ts`):
+- **M2** ✅ — `FiltersModule` (`filters.controller.ts`, `filters.service.ts`):
   GET (read file via UserPathsService, merge, respond) + PUT (validate,
   atomic write). e2e test with a temp USERS_ROOT: GET on missing file,
   PUT round-trip, PUT invalid → 400 + file untouched, extend_only
   violation → 400.
-- **M3** — wire into `app.module.ts`, update this repo's CLAUDE.md endpoint
+- **M3** ✅ — wire into `app.module.ts`, update this repo's CLAUDE.md endpoint
   table + work log.
 
 ## Risks

@@ -1,0 +1,180 @@
+{
+  "v": 1,
+  "valid": [
+    {
+      "name": "empty_overrides",
+      "overrides": {}
+    },
+    {
+      "name": "replace_title_keywords",
+      "overrides": {
+        "title_keywords": ["react", "frontend"]
+      }
+    },
+    {
+      "name": "boolean_flip",
+      "overrides": {
+        "exclude_german_language_required": false
+      }
+    },
+    {
+      "name": "extend_companies_additions_only",
+      "overrides": {
+        "exclude_companies": ["localmill"]
+      }
+    },
+    {
+      "name": "extend_companies_full_list_with_builtins",
+      "overrides": {
+        "exclude_companies": [
+          "micro1",
+          "alignerr",
+          "quikhire",
+          "hirefeed",
+          "mercor",
+          "outlier ai",
+          "localmill"
+        ]
+      }
+    },
+    {
+      "name": "portable_regex_patterns",
+      "overrides": {
+        "exclude_patterns": ["\\bjava\\b", "\\bphp\\b", "quality\\s+assurance"]
+      }
+    },
+    {
+      "name": "body_and_fullstack_patterns",
+      "overrides": {
+        "fullstack_backend_stacks": ["\\bjava\\b", "\\.net\\b"],
+        "body_exclude_patterns": ["\\bblazor\\b"]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown_key",
+      "overrides": {
+        "not_a_real_knob": 123
+      },
+      "error_keys": ["not_a_real_knob"]
+    },
+    {
+      "name": "derived_locations",
+      "overrides": {
+        "locations": ["mars"]
+      },
+      "error_keys": ["locations"]
+    },
+    {
+      "name": "wrong_type_boolean",
+      "overrides": {
+        "exclude_ai_training": "yes"
+      },
+      "error_keys": ["exclude_ai_training"]
+    },
+    {
+      "name": "wrong_type_list",
+      "overrides": {
+        "title_keywords": "angular"
+      },
+      "error_keys": ["title_keywords"]
+    },
+    {
+      "name": "invalid_regex",
+      "overrides": {
+        "exclude_patterns": ["\\bjava\\b", "(unbalanced"]
+      },
+      "error_keys": ["exclude_patterns[1]"]
+    },
+    {
+      "name": "python_named_group",
+      "overrides": {
+        "exclude_patterns": ["(?P<x>foo)"]
+      },
+      "error_keys": ["exclude_patterns[0]"]
+    },
+    {
+      "name": "js_named_group",
+      "overrides": {
+        "exclude_patterns": ["(?<x>foo)"]
+      },
+      "error_keys": ["exclude_patterns[0]"]
+    },
+    {
+      "name": "inline_flag",
+      "overrides": {
+        "exclude_patterns": ["(?i)foo"]
+      },
+      "error_keys": ["exclude_patterns[0]"]
+    },
+    {
+      "name": "extend_only_partial_builtins",
+      "overrides": {
+        "exclude_companies": ["micro1", "localmill"]
+      },
+      "error_keys": ["exclude_companies"]
+    },
+    {
+      "name": "empty_string_in_list",
+      "overrides": {
+        "title_keywords": ["react", ""]
+      },
+      "error_keys": ["title_keywords[1]"]
+    }
+  ],
+  "merge": [
+    {
+      "name": "replace_title_keywords",
+      "defaults_subset": {
+        "title_keywords": ["angular", "frontend"],
+        "exclude_ai_training": true
+      },
+      "overrides": {
+        "title_keywords": ["react", "frontend"]
+      },
+      "expected_effective": {
+        "title_keywords": ["react", "frontend"],
+        "exclude_ai_training": true
+      }
+    },
+    {
+      "name": "extend_companies_additions",
+      "defaults_subset": {
+        "exclude_companies": ["micro1", "alignerr"]
+      },
+      "overrides": {
+        "exclude_companies": ["localmill"]
+      },
+      "expected_effective": {
+        "exclude_companies": ["micro1", "alignerr", "localmill"]
+      }
+    },
+    {
+      "name": "extend_dedup_case_insensitive",
+      "defaults_subset": {
+        "exclude_companies": ["micro1"]
+      },
+      "overrides": {
+        "exclude_companies": ["Micro1", "localmill"]
+      },
+      "expected_effective": {
+        "exclude_companies": ["micro1", "localmill"]
+      }
+    },
+    {
+      "name": "derived_locations_ignored_in_merge",
+      "defaults_subset": {
+        "locations": ["remote", "wrocław"],
+        "title_keywords": ["angular"]
+      },
+      "overrides": {
+        "title_keywords": ["react"]
+      },
+      "expected_effective": {
+        "locations": ["remote", "wrocław"],
+        "title_keywords": ["react"]
+      }
+    }
+  ]
+}
