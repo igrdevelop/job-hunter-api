@@ -28,8 +28,11 @@ export interface FunnelData {
   answered: number;
 }
 
-const UNSENT_SQL = `LOWER(TRIM(sent)) IN ('', '—', '–', '-')`;
-const FILLED_SQL = `LOWER(TRIM(sent)) NOT IN ('', '—', '–', '-')`;
+// A dash ('-', '—', '–') means the row was already reviewed and marked as
+// not applicable — it counts as processed/filled, not unsent. Only a truly
+// empty value means the row still needs review.
+const UNSENT_SQL = `TRIM(sent) = ''`;
+const FILLED_SQL = `TRIM(sent) != ''`;
 
 const APPLICATION_COLUMNS = `
   id, date, company, title, stack,
