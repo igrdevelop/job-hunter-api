@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt.guard';
 import configuration from './config/configuration';
 import { FilesModule } from './files/files.module';
+import { FiltersModule } from './filters/filters.module';
 import { MailModule } from './mail/mail.module';
 import { GeneratedModule } from './generated/generated.module';
 import { HealthModule } from './health/health.module';
@@ -26,6 +27,7 @@ import { UsersModule } from './users/users.module';
     HealthModule,
     ApplicationsModule,
     FilesModule,
+    FiltersModule,
     GeneratedModule,
     TemplatesModule,
     AnalyticsModule,

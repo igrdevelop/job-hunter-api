@@ -34,6 +34,7 @@ Cloudflare Tunnel (job-hunter.igrflex.work, path routing)
 │     ├── /api/templates/* → TemplatesModule (stored under candidate/templates/)
 │     ├── /api/analytics/* → AnalyticsModule (funnel, cost, stats)
 │     ├── /api/settings    → SettingsModule (read-only bot .env, secrets masked)
+│     ├── /api/filters     → FiltersModule (per-user candidate/filters.yaml)
 │     └── /health          → Health check
 └── everything else → job-hunter-frontend container (nginx, job-hunter-site repo)
 ```
@@ -171,6 +172,10 @@ GET /api/settings          → { key: value, ... }  (per-user whitelisted keys)
 PUT /api/settings          { key: value, ... }     (upsert user_settings)
 GET /api/settings/global   → { categories: [...] } (admin only, masked bot .env)
 
+# Filters (JWT required) — users/{id}/candidate/filters.yaml
+GET /api/filters           → { defaults, overrides, effective, meta }
+PUT /api/filters           body=overrides only → fresh GET payload (400 + per-field errors)
+
 # Telegram (JWT required)
 POST /api/telegram/link-code → { code, expiresAt }  (6-char, 10-min)
 GET  /api/telegram/status    → { linked: boolean, chatId? }
@@ -220,3 +225,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-08-04 | grok | Split file browsing: `/api/files` → `candidate/` (list/upload), `/api/generated` → Applications date/company tree, `/api/templates` persists under `candidate/templates/`. Mounted `candidate/` rw in compose. |
 | 2026-08-05 | grok | Added read-only Settings: `GET /api/settings` reads bot `.env` via `BOT_ENV_PATH` (default `./data/.env`), hardcoded schema from `hunter/config.py` (~85 vars / 17 categories), secrets masked server-side. |
 | 2026-08-07 | sonnet | Multi-user A1–A4: persist app.sqlite volume, versioned migration runner (001: role/email_verified/disabled, 002: email_verification_tokens), REGISTRATION_ENABLED gate, role system + RolesGuard, download-token flow (?dt= on stream endpoints), USERS_ROOT per-user storage (UserPathsService), refactored FilesService/GeneratedService/TemplatesService/TrackerService/AnalyticsService to take userId, tracker.db migrations (user_id column + indexes + user_settings/telegram tables), one-time VPS migration script, email verification (MailService, POST /auth/verify, POST /auth/resend), unverified-user 403 gate in JwtAuthGuard, rate limiting (@nestjs/throttler), admin module (GET/PATCH/DELETE /api/admin/users), per-user settings (GET/PUT /api/settings), global settings moved to /api/settings/global (admin only), Telegram link-code + status endpoints. |
+| 2026-08-08 | grok | FILTERS_API M1–M3: `filters-schema.ts` (defaults transcribed from bot `filter_profile.builtin_defaults()` @145b03d) + `filters-validator.ts` (portable-regex, extend_only, stripDefaults) + shared `test/fixtures/filters_contract_v1.json` + contract unit test; FiltersModule GET/PUT `/api/filters` (atomic YAML write under `users/{id}/candidate/`); e2e with temp USERS_ROOT; wired into `app.module.ts`. |
