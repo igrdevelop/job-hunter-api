@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { existsSync, mkdtempSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import request from 'supertest';
@@ -163,5 +163,24 @@ describe('FiltersModule (e2e)', () => {
     const onDisk = readFileSync(filtersPath(), 'utf8');
     expect(onDisk).not.toContain('title_keywords');
     expect(onDisk).toContain('exclude_german_language_required');
+  });
+
+  it('GET corrupt filters.yaml → 422 (not empty overrides)', async () => {
+    mkdirSync(join(usersRoot, userId, 'candidate'), { recursive: true });
+    const corrupt = 'title_keywords: [\n  - unclosed';
+    writeFileSync(filtersPath(), corrupt, 'utf8');
+
+    const res = await request(app.getHttpServer())
+      .get('/api/filters')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(422);
+
+    const errors = res.body.errors ?? res.body.message?.errors;
+    expect(errors._).toMatch(/could not be parsed/i);
+    // File left untouched so a later PUT can repair it.
+    expect(readFileSync(filtersPath(), 'utf8')).toBe(corrupt);
+
+    // Restore a valid file for any follow-up tests in this suite.
+    writeFileSync(filtersPath(), 'exclude_german_language_required: false\n', 'utf8');
   });
 });

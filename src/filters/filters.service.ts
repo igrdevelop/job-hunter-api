@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import {
   existsSync,
   mkdirSync,
@@ -67,19 +71,30 @@ export class FiltersService {
     if (!existsSync(path)) {
       return {};
     }
+
+    let data: unknown;
     try {
-      const data = load(readFileSync(path, 'utf8'), { schema: JSON_SCHEMA });
-      if (data === null || data === undefined) {
-        return {};
-      }
-      if (typeof data !== 'object' || Array.isArray(data)) {
-        return {};
-      }
-      // On-disk may arrive via raw files API; GET returns parsed content as-is.
-      return data as FilterOverrides;
-    } catch {
+      data = load(readFileSync(path, 'utf8'), { schema: JSON_SCHEMA });
+    } catch (err) {
+      // Don't pretend the file is missing — UI would hide a corrupt on-disk
+      // profile until the next successful PUT overwrites it.
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new UnprocessableEntityException({
+        errors: { _: `filters.yaml could not be parsed: ${msg}` },
+      });
+    }
+
+    if (data === null || data === undefined) {
       return {};
     }
+    if (typeof data !== 'object' || Array.isArray(data)) {
+      throw new UnprocessableEntityException({
+        errors: { _: 'filters.yaml root must be a mapping' },
+      });
+    }
+
+    // On-disk may arrive via raw files API; GET returns parsed content as-is.
+    return data as FilterOverrides;
   }
 
   private writeOverrides(userId: string, overrides: FilterOverrides): void {
