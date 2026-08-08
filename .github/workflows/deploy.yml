@@ -87,9 +87,15 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           envs: COMPOSE_CONTENT
           script: |
+            set -e
             cd ${{ secrets.VPS_WORK_DIR }}
+            # Write via a temp file and verify it is non-empty before replacing:
+            # a full disk once produced an empty compose file that silently broke
+            # every later frontend deploy (2026-08-08).
+            echo "$COMPOSE_CONTENT" > docker-compose.prod.yml.tmp
+            test -s docker-compose.prod.yml.tmp
             cp docker-compose.prod.yml docker-compose.prod.yml.bak 2>/dev/null || true
-            echo "$COMPOSE_CONTENT" > docker-compose.prod.yml
+            mv docker-compose.prod.yml.tmp docker-compose.prod.yml
             cat > .env << EOF
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             SEED_USER_EMAIL=${{ secrets.SEED_USER_EMAIL }}
@@ -106,6 +112,8 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose -f docker-compose.prod.yml --env-file .env pull job-hunter-api cloudflared
             docker compose -f docker-compose.prod.yml --env-file .env up -d job-hunter-api cloudflared
-            docker image prune -f
+            # -a: also remove old tagged images (:sha from previous deploys) —
+            # without it they accumulated until the disk filled up (2026-08-08).
+            docker image prune -af
         env:
           COMPOSE_CONTENT: ${{ steps.compose.outputs.content }}
