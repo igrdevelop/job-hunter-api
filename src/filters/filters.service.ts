@@ -16,7 +16,9 @@ import { join } from 'path';
 import { UserPathsService } from '../users/user-paths.service';
 import {
   BUILTIN_DEFAULTS,
+  FILTER_KEY_META,
   FilterProfile,
+  FilterValue,
   buildFiltersMeta,
 } from './filters-schema';
 import {
@@ -93,8 +95,20 @@ export class FiltersService {
       });
     }
 
-    // On-disk may arrive via raw files API; GET returns parsed content as-is.
-    return data as FilterOverrides;
+    // On-disk may arrive via raw files API — drop derived keys (e.g. locations)
+    // so GET overrides match the PUT contract.
+    return this.sanitizeOverrides(data as Record<string, unknown>);
+  }
+
+  /** Keep editable knobs only; derived keys never appear in overrides. */
+  private sanitizeOverrides(data: Record<string, unknown>): FilterOverrides {
+    const out: FilterOverrides = {};
+    for (const [key, val] of Object.entries(data)) {
+      const meta = FILTER_KEY_META[key];
+      if (!meta || meta.derived) continue;
+      out[key] = val as FilterValue;
+    }
+    return out;
   }
 
   private writeOverrides(userId: string, overrides: FilterOverrides): void {

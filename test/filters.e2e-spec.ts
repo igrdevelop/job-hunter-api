@@ -183,4 +183,29 @@ describe('FiltersModule (e2e)', () => {
     // Restore a valid file for any follow-up tests in this suite.
     writeFileSync(filtersPath(), 'exclude_german_language_required: false\n', 'utf8');
   });
+
+  it('GET strips derived locations from overrides', async () => {
+    mkdirSync(join(usersRoot, userId, 'candidate'), { recursive: true });
+    writeFileSync(
+      filtersPath(),
+      [
+        'title_keywords:',
+        '  - react',
+        'locations:',
+        '  - mars',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const res = await request(app.getHttpServer())
+      .get('/api/filters')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(res.body.overrides.title_keywords).toEqual(['react']);
+    expect(res.body.overrides.locations).toBeUndefined();
+    expect(res.body.effective.locations).toEqual(res.body.defaults.locations);
+    expect(res.body.effective.locations).not.toContain('mars');
+  });
 });
