@@ -54,6 +54,9 @@ export class ApplicationsController {
     if (dto.toLearn !== undefined) {
       this.tracker.updateToLearn(user.id, id, dto.toLearn);
     }
+    if (dto.appStatus !== undefined) {
+      this.tracker.updateAppStatus(user.id, id, dto.appStatus);
+    }
     return this.tracker.getApplicationById(user.id, id);
   }
 }

@@ -37,7 +37,8 @@ const FILLED_SQL = `TRIM(sent) != ''`;
 const APPLICATION_COLUMNS = `
   id, date, company, title, stack,
   ats_status as atsStatus, url, folder, sent,
-  to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict
+  to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict,
+  reapplication, drive_url as driveUrl, app_status as appStatus
 `;
 
 @Injectable()
@@ -172,10 +173,14 @@ export class TrackerService {
     this.updateField(userId, id, 'to_learn', toLearn);
   }
 
+  updateAppStatus(userId: string, id: string, appStatus: string): void {
+    this.updateField(userId, id, 'app_status', appStatus);
+  }
+
   private updateField(
     userId: string,
     id: string,
-    column: 'sent' | 'to_learn',
+    column: 'sent' | 'to_learn' | 'app_status',
     value: string,
   ): void {
     const result = this.db
