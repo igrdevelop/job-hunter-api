@@ -34,6 +34,14 @@ export function runTrackerMigrations(
     `);
   }
 
+  // Manual application status set from the web UI (dropdown). The bot never
+  // reads or writes it; defaulted so the bot's explicit-column INSERTs are safe.
+  if (cols.length > 0 && !cols.includes('app_status')) {
+    trackerDb.exec(
+      `ALTER TABLE applications ADD COLUMN app_status TEXT NOT NULL DEFAULT ''`,
+    );
+  }
+
   // These tables are always created idempotently regardless of user_id column.
   trackerDb.exec(`
     CREATE TABLE IF NOT EXISTS user_settings (

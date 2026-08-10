@@ -11,4 +11,7 @@ export interface Application {
   toLearn: string;
   costUsd: number | null;
   atsVerdict: number | null;
+  reapplication: string;
+  driveUrl: string;
+  appStatus: string;
 }
