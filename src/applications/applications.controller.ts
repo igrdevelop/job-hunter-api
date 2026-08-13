@@ -54,6 +54,9 @@ export class ApplicationsController {
     if (dto.toLearn !== undefined) {
       this.tracker.updateToLearn(user.id, id, dto.toLearn);
     }
+    if (dto.reapplication !== undefined) {
+      this.tracker.updateReapplication(user.id, id, dto.reapplication);
+    }
     if (dto.appStatus !== undefined) {
       this.tracker.updateAppStatus(user.id, id, dto.appStatus);
     }

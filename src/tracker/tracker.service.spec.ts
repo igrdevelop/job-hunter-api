@@ -71,18 +71,20 @@ describe('TrackerService.updateField sheets_dirty', () => {
   function rowState(id: string): {
     sent: string;
     to_learn: string;
+    reapplication: string;
     app_status: string;
     sheets_row: number | null;
     sheets_dirty: number;
   } {
     return service.db
       .prepare(
-        `SELECT sent, to_learn, app_status, sheets_row, sheets_dirty
+        `SELECT sent, to_learn, reapplication, app_status, sheets_row, sheets_dirty
          FROM applications WHERE id = ?`,
       )
       .get(id) as {
       sent: string;
       to_learn: string;
+      reapplication: string;
       app_status: string;
       sheets_row: number | null;
       sheets_dirty: number;
@@ -106,6 +108,23 @@ describe('TrackerService.updateField sheets_dirty', () => {
     service.updateSent(userId, orphanId, '13 08');
     expect(rowState(orphanId)).toMatchObject({
       sent: '13 08',
+      sheets_row: null,
+      sheets_dirty: 0,
+    });
+  });
+
+  it('marks sheets_dirty when reapplication is patched on a live sheet row', () => {
+    service.updateReapplication(userId, liveId, '14 08');
+    expect(rowState(liveId)).toMatchObject({
+      reapplication: '14 08',
+      sheets_dirty: 1,
+    });
+  });
+
+  it('does not mark sheets_dirty when reapplication is patched and sheets_row is null', () => {
+    service.updateReapplication(userId, orphanId, '14 08');
+    expect(rowState(orphanId)).toMatchObject({
+      reapplication: '14 08',
       sheets_row: null,
       sheets_dirty: 0,
     });

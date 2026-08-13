@@ -141,7 +141,7 @@ GET    /api/applications        ?page=&limit=&sort=&order=&status=&search=
 GET    /api/applications/stats  → { total, unsent, filled }
 GET    /api/applications/funnel ?days=30
 GET    /api/applications/:id
-PATCH  /api/applications/:id    { sent?, toLearn? }
+PATCH  /api/applications/:id    { sent?, toLearn?, reapplication?, appStatus? }
 
 # Candidate files (JWT or ?dt= download token) — browse/upload users/{id}/candidate/
 GET  /api/files                       → list root
@@ -227,3 +227,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-08-07 | sonnet | Multi-user A1–A4: persist app.sqlite volume, versioned migration runner (001: role/email_verified/disabled, 002: email_verification_tokens), REGISTRATION_ENABLED gate, role system + RolesGuard, download-token flow (?dt= on stream endpoints), USERS_ROOT per-user storage (UserPathsService), refactored FilesService/GeneratedService/TemplatesService/TrackerService/AnalyticsService to take userId, tracker.db migrations (user_id column + indexes + user_settings/telegram tables), one-time VPS migration script, email verification (MailService, POST /auth/verify, POST /auth/resend), unverified-user 403 gate in JwtAuthGuard, rate limiting (@nestjs/throttler), admin module (GET/PATCH/DELETE /api/admin/users), per-user settings (GET/PUT /api/settings), global settings moved to /api/settings/global (admin only), Telegram link-code + status endpoints. |
 | 2026-08-08 | grok | FILTERS_API M1–M3: `filters-schema.ts` (defaults transcribed from bot `filter_profile.builtin_defaults()` @145b03d) + `filters-validator.ts` (portable-regex, extend_only, stripDefaults) + shared `test/fixtures/filters_contract_v1.json` + contract unit test; FiltersModule GET/PUT `/api/filters` (atomic YAML write under `users/{id}/candidate/`); e2e with temp USERS_ROOT; wired into `app.module.ts`. |
 | 2026-08-13 | grok | Stage 0 mirror bug: PATCH `/api/applications/:id` sets `sheets_dirty=1` only for mirrored columns (`sent`, `to_learn`) and only when `sheets_row IS NOT NULL`, so the bot's `resync_dirty()` picks up web edits without resurrecting sheet-deleted rows or rewriting the sheet for `app_status`. |
+| 2026-08-13 | grok | PATCH accepts `reapplication`; mirrored columns are `SHEETS_MIRRORED_COLUMNS` (source of truth: bot `COLUMNS` in `hunter/gsheets_client.py`). CI `test` job now runs `npm test`. Lint left out of CI because `npm run lint` is eslint `--fix`. |

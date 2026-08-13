@@ -11,5 +11,9 @@ export class UpdateApplicationDto {
 
   @IsOptional()
   @IsString()
+  reapplication?: string;
+
+  @IsOptional()
+  @IsString()
   appStatus?: string;
 }
