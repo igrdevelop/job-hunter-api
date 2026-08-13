@@ -183,8 +183,21 @@ export class TrackerService {
     column: 'sent' | 'to_learn' | 'app_status',
     value: string,
   ): void {
+    // Column name is interpolated from a closed union — not user input.
+    // Only Sent / To Learn exist in the Sheets A–K mirror. app_status is
+    // API-owned and not synced; dirtying it would make resync_dirty()
+    // overwrite the whole sheet row for a column that is not there.
+    // sheets_row IS NULL means the row was never pushed, or the owner
+    // deleted it from the sheet (mark_orphans_expired). Dirtying that
+    // would append a resurrected row via resync_dirty() → append_rows.
+    const setDirty =
+      column === 'sent' || column === 'to_learn'
+        ? ', sheets_dirty = CASE WHEN sheets_row IS NOT NULL THEN 1 ELSE sheets_dirty END'
+        : '';
     const result = this.db
-      .prepare(`UPDATE applications SET ${column} = ? WHERE id = ? AND user_id = ?`)
+      .prepare(
+        `UPDATE applications SET ${column} = ?${setDirty} WHERE id = ? AND user_id = ?`,
+      )
       .run(value, id, userId);
     if (result.changes === 0) {
       throw new NotFoundException(`Application ${id} not found`);
