@@ -41,6 +41,14 @@ const APPLICATION_COLUMNS = `
   reapplication, drive_url as driveUrl, app_status as appStatus
 `;
 
+// Source of truth: COLUMNS in the bot's hunter/gsheets_client.py (A–K).
+// Only these writable columns exist in the Sheets mirror. Forgetting to add
+// the next one here is silent — the PATCH writes the DB but resync_dirty()
+// never sees the row, so the sheet stays stale.
+const SHEETS_MIRRORED_COLUMNS = ['sent', 'to_learn', 'reapplication'] as const;
+type SheetsMirroredColumn = (typeof SHEETS_MIRRORED_COLUMNS)[number];
+type UpdatableColumn = SheetsMirroredColumn | 'app_status';
+
 @Injectable()
 export class TrackerService {
   readonly db: Database.Database;
@@ -173,6 +181,10 @@ export class TrackerService {
     this.updateField(userId, id, 'to_learn', toLearn);
   }
 
+  updateReapplication(userId: string, id: string, reapplication: string): void {
+    this.updateField(userId, id, 'reapplication', reapplication);
+  }
+
   updateAppStatus(userId: string, id: string, appStatus: string): void {
     this.updateField(userId, id, 'app_status', appStatus);
   }
@@ -180,20 +192,21 @@ export class TrackerService {
   private updateField(
     userId: string,
     id: string,
-    column: 'sent' | 'to_learn' | 'app_status',
+    column: UpdatableColumn,
     value: string,
   ): void {
     // Column name is interpolated from a closed union — not user input.
-    // Only Sent / To Learn exist in the Sheets A–K mirror. app_status is
-    // API-owned and not synced; dirtying it would make resync_dirty()
-    // overwrite the whole sheet row for a column that is not there.
+    // app_status is API-owned and not in the A–K mirror; dirtying it would
+    // make resync_dirty() overwrite the whole sheet row for a column that
+    // is not there.
     // sheets_row IS NULL means the row was never pushed, or the owner
     // deleted it from the sheet (mark_orphans_expired). Dirtying that
     // would append a resurrected row via resync_dirty() → append_rows.
-    const setDirty =
-      column === 'sent' || column === 'to_learn'
-        ? ', sheets_dirty = CASE WHEN sheets_row IS NOT NULL THEN 1 ELSE sheets_dirty END'
-        : '';
+    const setDirty = (SHEETS_MIRRORED_COLUMNS as readonly UpdatableColumn[]).includes(
+      column,
+    )
+      ? ', sheets_dirty = CASE WHEN sheets_row IS NOT NULL THEN 1 ELSE sheets_dirty END'
+      : '';
     const result = this.db
       .prepare(
         `UPDATE applications SET ${column} = ?${setDirty} WHERE id = ? AND user_id = ?`,
