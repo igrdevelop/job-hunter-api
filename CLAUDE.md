@@ -35,6 +35,7 @@ Cloudflare Tunnel (job-hunter.igrflex.work, path routing)
 │     ├── /api/analytics/* → AnalyticsModule (funnel, cost, stats)
 │     ├── /api/settings    → SettingsModule (read-only bot .env, secrets masked)
 │     ├── /api/filters     → FiltersModule (per-user candidate/filters.yaml)
+│     ├── /api/profile     → ProfileModule (structured resume profile, app.sqlite)
 │     └── /health          → Health check
 └── everything else → job-hunter-frontend container (nginx, job-hunter-site repo)
 ```
@@ -47,9 +48,14 @@ writes it; `job-hunter-site`'s just pulls+restarts its own `frontend`
 service against it).
 
 **Two SQLite databases:**
-- `app.sqlite` — own DB, `users` table. NestJS owns schema.
+- `app.sqlite` — own DB, `users` table plus `profiles`/`profile_revisions`
+  (docs/RESUME_PROFILE_STORE.md — the structured resume profile document +
+  its revision history). NestJS owns schema for both.
 - `tracker.db` — bot's DB, mounted via Docker volume. Bot owns schema;
-  NestJS reads freely + writes only Sent/To Learn/Re-application.
+  NestJS reads freely + writes only Sent/To Learn/Re-application. Also has
+  `profile_jobs` (render/parse handoff, API writes/bot drains — same
+  precedent as `telegram_link_codes`; the bot's own drain job is a follow-up
+  in its repo, see docs/RESUME_PROFILE_STORE.md P2 coordination note).
 
 **Shared Docker volumes with Python bot:**
 - `tracker.db` — read-write (bot writes applications, NestJS edits 3 fields)
@@ -176,6 +182,15 @@ GET /api/settings/global   → { categories: [...] } (admin only, masked bot .en
 GET /api/filters           → { defaults, overrides, effective, meta }
 PUT /api/filters           body=overrides only → fresh GET payload (400 + per-field errors)
 
+# Profile (JWT required) — structured resume profile, app.sqlite (profiles/profile_revisions)
+GET  /api/profile                        → { profile, revision, updatedAt }  (404 if none yet)
+PUT  /api/profile                        body=full document → { revision, renderJobId }
+                                            (inserts a profile_jobs 'render' row in tracker.db;
+                                             stays 'pending' until the bot's drain job lands)
+GET  /api/profile/revisions              → [ { rev, createdAt } ]  (newest first, last 20 kept)
+POST /api/profile/revisions/:rev/restore → same response as PUT
+GET  /api/profile/jobs/:id               → { kind, status, result?, error? }  (poll; 404 across users)
+
 # Telegram (JWT required)
 POST /api/telegram/link-code → { code, expiresAt }  (6-char, 10-min)
 GET  /api/telegram/status    → { linked: boolean, chatId? }
@@ -228,3 +243,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-08-08 | grok | FILTERS_API M1–M3: `filters-schema.ts` (defaults transcribed from bot `filter_profile.builtin_defaults()` @145b03d) + `filters-validator.ts` (portable-regex, extend_only, stripDefaults) + shared `test/fixtures/filters_contract_v1.json` + contract unit test; FiltersModule GET/PUT `/api/filters` (atomic YAML write under `users/{id}/candidate/`); e2e with temp USERS_ROOT; wired into `app.module.ts`. |
 | 2026-08-13 | grok | Stage 0 mirror bug: PATCH `/api/applications/:id` sets `sheets_dirty=1` only for mirrored columns (`sent`, `to_learn`) and only when `sheets_row IS NOT NULL`, so the bot's `resync_dirty()` picks up web edits without resurrecting sheet-deleted rows or rewriting the sheet for `app_status`. |
 | 2026-08-13 | grok | PATCH accepts `reapplication`; mirrored columns are `SHEETS_MIRRORED_COLUMNS` (source of truth: bot `COLUMNS` in `hunter/gsheets_client.py`). CI `test` job now runs `npm test`. Lint left out of CI because `npm run lint` is eslint `--fix`. |
+| 2026-08-30 | sonnet | RESUME_PROFILE_STORE P1: migration 003 (`profiles`/`profile_revisions`, app.sqlite) + `ProfileModule` (GET/PUT `/api/profile`, `GET/POST /api/profile/revisions*`) modeled on FiltersModule; `profile-validate.ts` mirrors the bot's shallow PUT checks (schema_version, 3 required identity fields, variant key format, ≤1MB); `test/fixtures/profile_contract_v1.json` is a byte-copy of the bot's `candidate/profile.example.json` @ origin/master `12e5a4d`. Found and fixed a latent ordering bug in `runMigrations()`: it assumed the base `users` table already existed (only ever true because `UsersRepository` was its sole caller) — moved that `CREATE TABLE IF NOT EXISTS users` into `db/migrations.ts` itself (`USERS_SCHEMA`, exported) so any app.sqlite consumer, including the new `ProfilesRepository`, is safe regardless of DI instantiation order. Raised the Express body-parser limit to 2MB in `main.ts` (`bodyParser: false` + manual `json`/`urlencoded`) since the default 100kb sat below the documented 1MB profile ceiling. P2 (tracker.db `profile_jobs` render handoff): added the `profile_jobs` DDL to `tracker-migrations.ts` (same idempotent-create style as `user_settings`/`telegram_links`); PUT/restore now insert a `render` job (uuid, self-contained payload = the full validated JSON) via `TrackerService.db` — no cross-DB transaction with the app.sqlite upsert (not possible with two separate better-sqlite3 connections), which is why the job payload is self-contained per the doc's risk note; added `GET /api/profile/jobs/:id` (404 across users, matching FiltersModule/TrackerService's per-user scoping style). `renderJobId` is now always a real id — jobs sit `pending` until the bot's own drain job (its P2 follow-up PR) lands. P3 (upload/parse intake), P4 (erasure) not yet started. |
