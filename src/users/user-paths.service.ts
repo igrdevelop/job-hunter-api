@@ -24,6 +24,11 @@ export class UserPathsService {
     return safeJoin(this.root, userId, 'templates');
   }
 
+  /** Raw resume uploads awaiting the bot's parse job — not user-browsable. */
+  uploadsDir(userId: string): string {
+    return safeJoin(this.root, userId, 'uploads');
+  }
+
   ensureUserDirs(userId: string): void {
     const dirs = [
       this.candidateDir(userId),

@@ -13,6 +13,7 @@ import { FiltersModule } from './filters/filters.module';
 import { MailModule } from './mail/mail.module';
 import { GeneratedModule } from './generated/generated.module';
 import { HealthModule } from './health/health.module';
+import { ProfileModule } from './profile/profile.module';
 import { SettingsModule } from './settings/settings.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { TemplatesModule } from './templates/templates.module';
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
     GeneratedModule,
     TemplatesModule,
     AnalyticsModule,
+    ProfileModule,
     SettingsModule,
     TelegramModule,
     UsersModule,

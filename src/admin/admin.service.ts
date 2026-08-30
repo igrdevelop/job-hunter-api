@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { rmSync } from 'fs';
 import { dirname } from 'path';
 import { UsersRepository } from '../auth/user.db';
+import { ProfileService } from '../profile/profile.service';
 import { UserPathsService } from '../users/user-paths.service';
 
 @Injectable()
@@ -9,6 +10,7 @@ export class AdminService {
   constructor(
     private readonly users: UsersRepository,
     private readonly userPaths: UserPathsService,
+    private readonly profile: ProfileService,
   ) {}
 
   listUsers() {
@@ -41,6 +43,11 @@ export class AdminService {
   deleteUser(id: string): boolean {
     const user = this.users.findById(id);
     if (!user) return false;
+    // Right-to-erasure (docs/RESUME_PROFILE_STORE.md): profile/revisions
+    // (app.sqlite) and profile_jobs (tracker.db) rows first — the uploads/
+    // directory dies below with the rest of users/{id}/, same as
+    // candidate/ and Applications/ today.
+    this.profile.eraseUser(id);
     this.users.deleteById(id);
     // Remove user directory tree (best-effort).
     try {

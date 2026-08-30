@@ -63,5 +63,21 @@ export function runTrackerMigrations(
       user_id    TEXT NOT NULL,
       expires_at TEXT NOT NULL
     );
+
+    -- Render/parse handoff to the bot (docs/RESUME_PROFILE_STORE.md P2/P3).
+    -- Same precedent as telegram_link_codes: API writes, bot consumes.
+    CREATE TABLE IF NOT EXISTS profile_jobs (
+      id         TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      kind       TEXT NOT NULL,
+      payload    TEXT NOT NULL DEFAULT '',
+      status     TEXT NOT NULL DEFAULT 'pending',
+      result     TEXT NOT NULL DEFAULT '',
+      error      TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_profile_jobs_status
+      ON profile_jobs(status, created_at);
   `);
 }

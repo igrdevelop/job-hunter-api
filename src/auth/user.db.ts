@@ -16,18 +16,6 @@ export interface User {
   created_at: string;
 }
 
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user',
-    email_verified INTEGER NOT NULL DEFAULT 0,
-    disabled INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  )
-`;
-
 @Injectable()
 export class UsersRepository {
   private db: Database.Database;
@@ -37,7 +25,6 @@ export class UsersRepository {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
-    this.db.exec(SCHEMA);
     runMigrations(this.db);
   }
 
