@@ -300,6 +300,27 @@ describe('ProfileModule (e2e)', () => {
     expect(revsB.body).toEqual([{ rev: 1, createdAt: expect.any(String) }]);
   });
 
+  it("isolation: user B cannot restore user A's revision by number", async () => {
+    // A has been PUT dozens of times by this point (pruning test above) and
+    // is far ahead of B's own revision count — pick a rev number that
+    // exists for A but not for B, and confirm B gets 404, never A's content,
+    // and B's own state is left untouched.
+    const aState = await authed('get', '/api/profile', tokenA).expect(200);
+    const aRev: number = aState.body.revision;
+
+    const bBefore = await authed('get', '/api/profile', tokenB).expect(200);
+    expect(aRev).toBeGreaterThan(bBefore.body.revision);
+
+    await authed(
+      'post',
+      `/api/profile/revisions/${aRev}/restore`,
+      tokenB,
+    ).expect(404);
+
+    const bAfter = await authed('get', '/api/profile', tokenB).expect(200);
+    expect(bAfter.body).toEqual(bBefore.body);
+  });
+
   it('POST /api/profile/uploads with a valid file → 201 with a self-contained relative payload', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/profile/uploads')
@@ -352,6 +373,43 @@ describe('ProfileModule (e2e)', () => {
     expect(row.payload).toMatch(/^uploads\/[0-9a-f-]{36}\.pdf$/);
     expect(JSON.parse(row.result).filename).toBe('passwd.pdf');
     expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
+  });
+
+  it('resume uploads are throttled to 10/hour per user', async () => {
+    // A dedicated user, never touched by other upload tests, so the count
+    // below is exact instead of depending on how many uploads earlier tests
+    // already spent from tokenA's/tokenB's buckets.
+    const emailC = 'profile-e2e-throttle@test.local';
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: emailC, password })
+      .expect(201);
+
+    const db = new Database(appDbPath);
+    db.prepare('UPDATE users SET email_verified = 1 WHERE email = ?').run(
+      emailC,
+    );
+    db.close();
+
+    const loginC = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: emailC, password })
+      .expect(201);
+    const tokenC = loginC.body.accessToken as string;
+
+    for (let i = 0; i < 10; i++) {
+      await request(app.getHttpServer())
+        .post('/api/profile/uploads')
+        .set('Authorization', `Bearer ${tokenC}`)
+        .attach('file', Buffer.from(`resume ${i}`), `resume-${i}.txt`)
+        .expect(201);
+    }
+
+    await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenC}`)
+      .attach('file', Buffer.from('one too many'), 'resume-11.txt')
+      .expect(429);
   });
 
   it('DELETE /api/admin/users/:id erases all profile-store data for that user', async () => {
