@@ -300,6 +300,27 @@ describe('ProfileModule (e2e)', () => {
     expect(revsB.body).toEqual([{ rev: 1, createdAt: expect.any(String) }]);
   });
 
+  it("isolation: user B cannot restore user A's revision by number", async () => {
+    // A has been PUT dozens of times by this point (pruning test above) and
+    // is far ahead of B's own revision count — pick a rev number that
+    // exists for A but not for B, and confirm B gets 404, never A's content,
+    // and B's own state is left untouched.
+    const aState = await authed('get', '/api/profile', tokenA).expect(200);
+    const aRev: number = aState.body.revision;
+
+    const bBefore = await authed('get', '/api/profile', tokenB).expect(200);
+    expect(aRev).toBeGreaterThan(bBefore.body.revision);
+
+    await authed(
+      'post',
+      `/api/profile/revisions/${aRev}/restore`,
+      tokenB,
+    ).expect(404);
+
+    const bAfter = await authed('get', '/api/profile', tokenB).expect(200);
+    expect(bAfter.body).toEqual(bBefore.body);
+  });
+
   it('POST /api/profile/uploads with a valid file → 201 with a self-contained relative payload', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/profile/uploads')
