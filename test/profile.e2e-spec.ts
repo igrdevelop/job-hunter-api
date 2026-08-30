@@ -375,6 +375,43 @@ describe('ProfileModule (e2e)', () => {
     expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
   });
 
+  it('resume uploads are throttled to 10/hour per user', async () => {
+    // A dedicated user, never touched by other upload tests, so the count
+    // below is exact instead of depending on how many uploads earlier tests
+    // already spent from tokenA's/tokenB's buckets.
+    const emailC = 'profile-e2e-throttle@test.local';
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: emailC, password })
+      .expect(201);
+
+    const db = new Database(appDbPath);
+    db.prepare('UPDATE users SET email_verified = 1 WHERE email = ?').run(
+      emailC,
+    );
+    db.close();
+
+    const loginC = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: emailC, password })
+      .expect(201);
+    const tokenC = loginC.body.accessToken as string;
+
+    for (let i = 0; i < 10; i++) {
+      await request(app.getHttpServer())
+        .post('/api/profile/uploads')
+        .set('Authorization', `Bearer ${tokenC}`)
+        .attach('file', Buffer.from(`resume ${i}`), `resume-${i}.txt`)
+        .expect(201);
+    }
+
+    await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenC}`)
+      .attach('file', Buffer.from('one too many'), 'resume-11.txt')
+      .expect(429);
+  });
+
   it('DELETE /api/admin/users/:id erases all profile-store data for that user', async () => {
     // Give user B a profile and an upload to erase.
     const bDoc = JSON.parse(JSON.stringify(fixture));
