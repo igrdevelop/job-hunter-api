@@ -113,4 +113,15 @@ export class ProfilesRepository {
       )
       .get(userId, rev) as RevisionRow | undefined;
   }
+
+  /** Right-to-erasure (docs/RESUME_PROFILE_STORE.md): wipe both tables. */
+  deleteAllForUser(userId: string): void {
+    const run = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM profiles WHERE user_id = ?').run(userId);
+      this.db
+        .prepare('DELETE FROM profile_revisions WHERE user_id = ?')
+        .run(userId);
+    });
+    run();
+  }
 }

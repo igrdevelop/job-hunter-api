@@ -24,6 +24,7 @@ describe('ProfileModule (e2e)', () => {
   let tokenA: string;
   let tokenB: string;
   let userIdA: string;
+  let userIdB: string;
   const emailA = 'profile-e2e-a@test.local';
   const emailB = 'profile-e2e-b@test.local';
   const password = 'profile-e2e-password-1';
@@ -80,13 +81,23 @@ describe('ProfileModule (e2e)', () => {
       .send({ email: emailB, password })
       .expect(201);
     tokenB = loginB.body.accessToken as string;
+
+    const meB = await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${tokenB}`)
+      .expect(200);
+    userIdB = meB.body.id as string;
   });
 
   afterAll(async () => {
     await app?.close();
   });
 
-  function authed(method: 'get' | 'put' | 'post', path: string, token: string) {
+  function authed(
+    method: 'get' | 'put' | 'post' | 'delete',
+    path: string,
+    token: string,
+  ) {
     return request(app.getHttpServer())
       [method](path)
       .set('Authorization', `Bearer ${token}`);
@@ -341,5 +352,44 @@ describe('ProfileModule (e2e)', () => {
     expect(row.payload).toMatch(/^uploads\/[0-9a-f-]{36}\.pdf$/);
     expect(JSON.parse(row.result).filename).toBe('passwd.pdf');
     expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
+  });
+
+  it('DELETE /api/admin/users/:id erases all profile-store data for that user', async () => {
+    // Give user B a profile and an upload to erase.
+    const bDoc = JSON.parse(JSON.stringify(fixture));
+    bDoc.core.identity.full_name = 'Erase Me';
+    await authed('put', '/api/profile', tokenB).send(bDoc).expect(200);
+
+    await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenB}`)
+      .attach('file', Buffer.from('resume text'), 'erase-me.pdf')
+      .expect(201);
+
+    const uploadsDir = join(usersRoot, userIdB, 'uploads');
+    expect(existsSync(uploadsDir)).toBe(true);
+
+    // tokenA belongs to the seeded owner (role=admin).
+    await authed('delete', `/api/admin/users/${userIdB}`, tokenA).expect(200);
+
+    const appDb = new Database(appDbPath, { readonly: true });
+    const profileRow = appDb
+      .prepare('SELECT 1 FROM profiles WHERE user_id = ?')
+      .get(userIdB);
+    const revisionRow = appDb
+      .prepare('SELECT 1 FROM profile_revisions WHERE user_id = ?')
+      .get(userIdB);
+    appDb.close();
+    expect(profileRow).toBeUndefined();
+    expect(revisionRow).toBeUndefined();
+
+    const trackerDb = new Database(trackerDbPath, { readonly: true });
+    const jobRow = trackerDb
+      .prepare('SELECT 1 FROM profile_jobs WHERE user_id = ?')
+      .get(userIdB);
+    trackerDb.close();
+    expect(jobRow).toBeUndefined();
+
+    expect(existsSync(uploadsDir)).toBe(false);
   });
 });

@@ -10,5 +10,6 @@ import { UserThrottlerGuard } from './user-throttler.guard';
   imports: [TrackerModule, UsersModule],
   controllers: [ProfileController],
   providers: [ProfileService, ProfilesRepository, UserThrottlerGuard],
+  exports: [ProfileService],
 })
 export class ProfileModule {}

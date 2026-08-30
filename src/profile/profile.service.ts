@@ -142,6 +142,19 @@ export class ProfileService {
     return { jobId };
   }
 
+  /**
+   * Right-to-erasure (docs/RESUME_PROFILE_STORE.md): wipe every profile-store
+   * row for this user across both databases. The uploads/ directory itself
+   * is not removed here — it dies with the rest of users/{id}/ in
+   * AdminService.deleteUser, same as candidate/ and Applications/ today.
+   */
+  eraseUser(userId: string): void {
+    this.repo.deleteAllForUser(userId);
+    this.tracker.db
+      .prepare('DELETE FROM profile_jobs WHERE user_id = ?')
+      .run(userId);
+  }
+
   getJob(userId: string, id: string): ProfileJobResponse {
     const row = this.tracker.db
       .prepare(
