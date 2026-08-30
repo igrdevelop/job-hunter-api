@@ -3,9 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { mkdirSync, writeFileSync } from 'fs';
+import { basename, join } from 'path';
 import { TrackerService } from '../tracker/tracker.service';
+import { UserPathsService } from '../users/user-paths.service';
 import { ProfilesRepository } from './profile.db';
+import { ALLOWED_UPLOAD_EXTENSIONS, extensionOf } from './profile-upload';
 import { SUPPORTED_SCHEMA_VERSION, validateProfile } from './profile-validate';
 
 export interface ProfileGetResponse {
@@ -38,6 +42,7 @@ export class ProfileService {
   constructor(
     private readonly repo: ProfilesRepository,
     private readonly tracker: TrackerService,
+    private readonly userPaths: UserPathsService,
   ) {}
 
   get(userId: string): ProfileGetResponse {
@@ -64,7 +69,7 @@ export class ProfileService {
       json,
       SUPPORTED_SCHEMA_VERSION,
     );
-    const renderJobId = this.createRenderJob(userId, json);
+    const renderJobId = this.createJob(userId, 'render', json);
     return { revision, renderJobId };
   }
 
@@ -93,8 +98,48 @@ export class ProfileService {
       row.json,
       schemaVersion,
     );
-    const renderJobId = this.createRenderJob(userId, row.json);
+    const renderJobId = this.createJob(userId, 'render', row.json);
     return { revision, renderJobId };
+  }
+
+  /**
+   * Store the raw upload under uploads/ (never user-browsable — only the
+   * bot's parse job reads it) and hand off a parse job. The stored filename
+   * is always `{uuid}.{ext}`; the client's original filename never touches
+   * the filesystem path, so a hostile name (e.g. containing `..`) is inert —
+   * it only ever appears, basename'd, as display metadata on the job row.
+   */
+  uploadResume(
+    userId: string,
+    file: Express.Multer.File | undefined,
+  ): { jobId: string } {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Empty file');
+    }
+    const ext = extensionOf(file.originalname);
+    if (!ALLOWED_UPLOAD_EXTENSIONS.has(ext)) {
+      throw new BadRequestException(`Unsupported file type: .${ext || '?'}`);
+    }
+
+    const uploadId = randomUUID();
+    const fileName = `${uploadId}.${ext}`;
+    const dir = this.userPaths.uploadsDir(userId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, fileName), file.buffer);
+
+    const sha256 = createHash('sha256').update(file.buffer).digest('hex');
+    const metadata = JSON.stringify({
+      filename: basename(file.originalname),
+      sha256,
+    });
+
+    const jobId = this.createJob(
+      userId,
+      'parse',
+      `uploads/${fileName}`,
+      metadata,
+    );
+    return { jobId };
   }
 
   getJob(userId: string, id: string): ProfileJobResponse {
@@ -117,21 +162,26 @@ export class ProfileService {
   }
 
   /**
-   * Self-contained payload (the full profile JSON) — the bot never reads
-   * app.sqlite, so this row alone is enough for its drain job to render.
-   * No cross-DB transaction with the profiles upsert above (better-sqlite3
-   * transactions are per-connection): a lost job just means the next PUT
-   * creates a fresh one, and rendering is idempotent full-overwrite
-   * (docs/RESUME_PROFILE_STORE.md "Risks / decisions").
+   * Self-contained payload (the full profile JSON for 'render', the
+   * uploads/-relative path for 'parse') — the bot never reads app.sqlite,
+   * so this row alone is enough for its drain job. No cross-DB transaction
+   * with the app.sqlite writes above (better-sqlite3 transactions are
+   * per-connection): a lost job just means the next PUT/upload creates a
+   * fresh one (docs/RESUME_PROFILE_STORE.md "Risks / decisions").
    */
-  private createRenderJob(userId: string, payload: string): string {
+  private createJob(
+    userId: string,
+    kind: 'render' | 'parse',
+    payload: string,
+    result = '',
+  ): string {
     const id = randomUUID();
     this.tracker.db
       .prepare(
-        `INSERT INTO profile_jobs (id, user_id, kind, payload, status, created_at)
-         VALUES (?, ?, 'render', ?, 'pending', ?)`,
+        `INSERT INTO profile_jobs (id, user_id, kind, payload, status, result, created_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
       )
-      .run(id, userId, payload, new Date().toISOString());
+      .run(id, userId, kind, payload, result, new Date().toISOString());
     return id;
   }
 }

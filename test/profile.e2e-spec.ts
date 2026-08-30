@@ -1,12 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import Database from 'better-sqlite3';
-import { mkdtempSync, readFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { MAX_UPLOAD_BYTES } from '../src/profile/profile-upload';
 
 const fixture = JSON.parse(
   readFileSync(
@@ -18,8 +19,11 @@ const fixture = JSON.parse(
 describe('ProfileModule (e2e)', () => {
   let app: INestApplication<App>;
   let appDbPath: string;
+  let trackerDbPath: string;
+  let usersRoot: string;
   let tokenA: string;
   let tokenB: string;
+  let userIdA: string;
   const emailA = 'profile-e2e-a@test.local';
   const emailB = 'profile-e2e-b@test.local';
   const password = 'profile-e2e-password-1';
@@ -27,10 +31,12 @@ describe('ProfileModule (e2e)', () => {
   beforeAll(async () => {
     const root = mkdtempSync(join(tmpdir(), 'profile-e2e-'));
     appDbPath = join(root, 'app.sqlite');
+    trackerDbPath = join(root, 'tracker.db');
+    usersRoot = join(root, 'users');
     process.env.JWT_SECRET = 'e2e-profile-secret-'.repeat(4);
     process.env.APP_DB_PATH = appDbPath;
-    process.env.TRACKER_DB_PATH = join(root, 'tracker.db');
-    process.env.USERS_ROOT = join(root, 'users');
+    process.env.TRACKER_DB_PATH = trackerDbPath;
+    process.env.USERS_ROOT = usersRoot;
     process.env.SEED_USER_EMAIL = emailA;
     process.env.SEED_USER_PASSWORD = password;
     process.env.REGISTRATION_ENABLED = 'true';
@@ -48,6 +54,12 @@ describe('ProfileModule (e2e)', () => {
       .send({ email: emailA, password })
       .expect(201);
     tokenA = loginA.body.accessToken as string;
+
+    const meA = await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .expect(200);
+    userIdA = meA.body.id as string;
 
     await request(app.getHttpServer())
       .post('/auth/register')
@@ -78,6 +90,27 @@ describe('ProfileModule (e2e)', () => {
     return request(app.getHttpServer())
       [method](path)
       .set('Authorization', `Bearer ${token}`);
+  }
+
+  interface ProfileJobRow {
+    user_id: string;
+    kind: string;
+    payload: string;
+    status: string;
+    result: string;
+  }
+
+  function readJobRow(jobId: string): ProfileJobRow {
+    const db = new Database(trackerDbPath, { readonly: true });
+    try {
+      return db
+        .prepare(
+          `SELECT user_id, kind, payload, status, result FROM profile_jobs WHERE id = ?`,
+        )
+        .get(jobId) as ProfileJobRow;
+    } finally {
+      db.close();
+    }
   }
 
   it('GET with no profile yet → 404', async () => {
@@ -254,5 +287,59 @@ describe('ProfileModule (e2e)', () => {
       tokenB,
     ).expect(200);
     expect(revsB.body).toEqual([{ rev: 1, createdAt: expect.any(String) }]);
+  });
+
+  it('POST /api/profile/uploads with a valid file → 201 with a self-contained relative payload', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .attach('file', Buffer.from('resume text'), 'my resume.txt')
+      .expect(201);
+
+    expect(res.body).toEqual({ jobId: expect.any(String) });
+
+    const row = readJobRow(res.body.jobId);
+    expect(row.user_id).toBe(userIdA);
+    expect(row.kind).toBe('parse');
+    expect(row.status).toBe('pending');
+    expect(row.payload).toMatch(/^uploads\/[0-9a-f-]{36}\.txt$/);
+
+    const metadata = JSON.parse(row.result);
+    expect(metadata.filename).toBe('my resume.txt');
+    expect(typeof metadata.sha256).toBe('string');
+
+    expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
+  });
+
+  it('POST /api/profile/uploads with an unsupported extension → 400', async () => {
+    await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .attach('file', Buffer.from('not a resume'), 'resume.exe')
+      .expect(400);
+  });
+
+  it('POST /api/profile/uploads over the size limit → 413', async () => {
+    const big = Buffer.alloc(MAX_UPLOAD_BYTES + 1024, 'a');
+    await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .attach('file', big, 'big.pdf')
+      .expect(413);
+  });
+
+  it('path traversal in the uploaded filename is inert', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/profile/uploads')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .attach('file', Buffer.from('resume text'), '../../etc/passwd.pdf')
+      .expect(201);
+
+    const row = readJobRow(res.body.jobId);
+    // Stored name is always {uuid}.{ext} — the traversal never reaches the
+    // filesystem path, and only survives, basename'd, as display metadata.
+    expect(row.payload).toMatch(/^uploads\/[0-9a-f-]{36}\.pdf$/);
+    expect(JSON.parse(row.result).filename).toBe('passwd.pdf');
+    expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
   });
 });

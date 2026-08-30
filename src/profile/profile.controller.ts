@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -6,10 +7,22 @@ import {
   Param,
   Post,
   Put,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
+import { memoryStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
+import {
+  ALLOWED_UPLOAD_EXTENSIONS,
+  extensionOf,
+  MAX_UPLOAD_BYTES,
+} from './profile-upload';
 import { ProfileService } from './profile.service';
+import { UserThrottlerGuard } from './user-throttler.guard';
 
 @Controller('profile')
 export class ProfileController {
@@ -39,5 +52,32 @@ export class ProfileController {
   @Get('jobs/:id')
   getJob(@CurrentUser() user: CurrentUserData, @Param('id') id: string) {
     return this.profile.getJob(user.id, id);
+  }
+
+  @Post('uploads')
+  @UseGuards(UserThrottlerGuard)
+  @Throttle({ default: { ttl: 60 * 60 * 1000, limit: 10 } })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_UPLOAD_BYTES },
+      fileFilter: (_req, file, cb) => {
+        const ext = extensionOf(file.originalname);
+        if (!ALLOWED_UPLOAD_EXTENSIONS.has(ext)) {
+          cb(
+            new BadRequestException(`Unsupported file type: .${ext || '?'}`),
+            false,
+          );
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  upload(
+    @CurrentUser() user: CurrentUserData,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.profile.uploadResume(user.id, file);
   }
 }
