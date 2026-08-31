@@ -118,4 +118,29 @@ export class ProfileController {
     });
     return new StreamableFile(createReadStream(path));
   }
+
+  @Get('uploads')
+  listUploads(@CurrentUser() user: CurrentUserData) {
+    return this.profile.listUploads(user.id);
+  }
+
+  @Get('files')
+  listFiles(@CurrentUser() user: CurrentUserData) {
+    return this.profile.listCandidateFiles(user.id);
+  }
+
+  @Get('files/:name')
+  getFile(
+    @CurrentUser() user: CurrentUserData,
+    @Param('name') name: string,
+    @Res({ passthrough: true }) res: Response,
+  ): StreamableFile {
+    const { path, contentType } = this.profile.getCandidateFile(user.id, name);
+    const safeName = name.replace(/"/g, '');
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `inline; filename="${safeName}"`,
+    });
+    return new StreamableFile(createReadStream(path));
+  }
 }
