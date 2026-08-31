@@ -71,7 +71,9 @@ the contract source for it until then).
   CREATE TABLE IF NOT EXISTS profile_jobs (
     id         TEXT PRIMARY KEY,             -- uuid
     user_id    TEXT NOT NULL,
-    kind       TEXT NOT NULL,                -- 'render' | 'parse'
+    kind       TEXT NOT NULL,                -- 'render' | 'parse' | 'preview'
+                                             --   ('preview' added later — see
+                                             --    docs/PROFILE_PAGE_TABS.md)
     payload    TEXT NOT NULL DEFAULT '',     -- see below
     status     TEXT NOT NULL DEFAULT 'pending', -- pending|running|done|error
     result     TEXT NOT NULL DEFAULT '',
