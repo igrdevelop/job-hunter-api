@@ -109,6 +109,21 @@ export class AuthService implements OnModuleInit {
     return this.users.findById(id) ?? null;
   }
 
+  /**
+   * docs/PROFILE_PAGE_TABS.md T3: gates the owner-only site UI (tab 4 +
+   * the variant chip row). Mechanism is a configured owner user id
+   * (`OWNER_USER_ID`, the same identity `DEFAULT_USER_ID` names on the bot
+   * side) rather than the existing `role='admin'` — `role` gates platform
+   * ADMINISTRATION (user management), a distinct concept from "the one
+   * person whose curated profile drives these owner-only features", and a
+   * future multi-admin deployment must not conflate the two. Unset
+   * `OWNER_USER_ID` means isOwner is always false, never a guess.
+   */
+  isOwner(userId: string): boolean {
+    const ownerId = this.config.get<string>('owner.userId');
+    return !!ownerId && userId === ownerId;
+  }
+
   private async sendVerificationEmail(user: User): Promise<void> {
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + VERIFY_TOKEN_TTL_MS);

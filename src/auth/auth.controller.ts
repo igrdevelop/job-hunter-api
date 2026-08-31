@@ -71,6 +71,12 @@ export class AuthController {
     if (!user) {
       throw new NotFoundException();
     }
-    return { id: user.id, email: user.email, role: user.role, emailVerified: !!user.email_verified };
+    return {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      emailVerified: !!user.email_verified,
+      isOwner: this.authService.isOwner(user.id),
+    };
   }
 }
