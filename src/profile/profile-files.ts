@@ -49,6 +49,9 @@ export interface CandidateFileInfo {
 
 export interface UploadListItem {
   id: string;
+  // null only on legacy rows (uploads made before app.sqlite's
+  // profile_uploads table, migration 004) whose parse job already
+  // completed — every new upload keeps its metadata durably.
   filename: string | null;
   sha256: string | null;
   uploadedAt: string;
@@ -62,12 +65,13 @@ export interface UploadMetadata {
 }
 
 /**
- * `profile_jobs.result` holds the upload's `{filename, sha256}` metadata
- * only until the bot's drain job finishes the parse and overwrites it with
- * the real parse output (docs/PROFILE_PAGE_TABS.md T2's known gap, flagged
- * in the 2026-08-30 work log entry) — so this only succeeds while the job is
- * still pending/running. Anything that doesn't parse as that exact shape is
- * treated as "metadata no longer available", not an error.
+ * Legacy-only: uploads made before app.sqlite's `profile_uploads` table
+ * (migration 004) stashed `{filename, sha256}` in the parse job's `result`
+ * column, where it survives only until the bot's drain job overwrites it
+ * with the real parse output. New uploads never write metadata there — this
+ * parse exists solely so pre-migration rows still list what they can.
+ * Anything that doesn't parse as that exact shape is treated as "metadata
+ * no longer available", not an error.
  */
 export function tryParseUploadMetadata(result: string): UploadMetadata | null {
   if (!result) return null;

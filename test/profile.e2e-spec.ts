@@ -124,6 +124,27 @@ describe('ProfileModule (e2e)', () => {
     }
   }
 
+  interface ProfileUploadRow {
+    id: string;
+    user_id: string;
+    filename: string;
+    sha256: string;
+    stored_path: string;
+    job_id: string;
+    created_at: string;
+  }
+
+  function readUploadRowByJobId(jobId: string): ProfileUploadRow | undefined {
+    const db = new Database(appDbPath, { readonly: true });
+    try {
+      return db
+        .prepare(`SELECT * FROM profile_uploads WHERE job_id = ?`)
+        .get(jobId) as ProfileUploadRow | undefined;
+    } finally {
+      db.close();
+    }
+  }
+
   it('GET with no profile yet → 404', async () => {
     await authed('get', '/api/profile', tokenA).expect(404);
   });
@@ -335,10 +356,16 @@ describe('ProfileModule (e2e)', () => {
     expect(row.kind).toBe('parse');
     expect(row.status).toBe('pending');
     expect(row.payload).toMatch(/^uploads\/[0-9a-f-]{36}\.txt$/);
+    // `result` belongs to the bot's parse output (shared contract) — upload
+    // metadata lives in app.sqlite's profile_uploads, not here.
+    expect(row.result).toBe('');
 
-    const metadata = JSON.parse(row.result);
-    expect(metadata.filename).toBe('my resume.txt');
-    expect(typeof metadata.sha256).toBe('string');
+    const upload = readUploadRowByJobId(res.body.jobId);
+    expect(upload).toBeDefined();
+    expect(upload!.user_id).toBe(userIdA);
+    expect(upload!.filename).toBe('my resume.txt');
+    expect(typeof upload!.sha256).toBe('string');
+    expect(upload!.stored_path).toBe(row.payload);
 
     expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
   });
@@ -371,7 +398,7 @@ describe('ProfileModule (e2e)', () => {
     // Stored name is always {uuid}.{ext} — the traversal never reaches the
     // filesystem path, and only survives, basename'd, as display metadata.
     expect(row.payload).toMatch(/^uploads\/[0-9a-f-]{36}\.pdf$/);
-    expect(JSON.parse(row.result).filename).toBe('passwd.pdf');
+    expect(readUploadRowByJobId(res.body.jobId)!.filename).toBe('passwd.pdf');
     expect(existsSync(join(usersRoot, userIdA, row.payload))).toBe(true);
   });
 
@@ -437,9 +464,13 @@ describe('ProfileModule (e2e)', () => {
     const revisionRow = appDb
       .prepare('SELECT 1 FROM profile_revisions WHERE user_id = ?')
       .get(userIdB);
+    const uploadRow = appDb
+      .prepare('SELECT 1 FROM profile_uploads WHERE user_id = ?')
+      .get(userIdB);
     appDb.close();
     expect(profileRow).toBeUndefined();
     expect(revisionRow).toBeUndefined();
+    expect(uploadRow).toBeUndefined();
 
     const trackerDb = new Database(trackerDbPath, { readonly: true });
     const jobRow = trackerDb
