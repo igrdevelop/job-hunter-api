@@ -7,12 +7,16 @@ import {
   Param,
   Post,
   Put,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
+import { createReadStream } from 'fs';
+import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
@@ -79,5 +83,39 @@ export class ProfileController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     return this.profile.uploadResume(user.id, file);
+  }
+
+  @Post('preview')
+  @UseGuards(UserThrottlerGuard)
+  @Throttle({ default: { ttl: 60 * 60 * 1000, limit: 10 } })
+  preview(@CurrentUser() user: CurrentUserData, @Body() body: unknown) {
+    return this.profile.preview(user.id, body);
+  }
+
+  @Get('previews')
+  listPreviews(@CurrentUser() user: CurrentUserData) {
+    return this.profile.listPreviews(user.id);
+  }
+
+  @Get('previews/:track/:ts/:file')
+  getPreviewFile(
+    @CurrentUser() user: CurrentUserData,
+    @Param('track') track: string,
+    @Param('ts') ts: string,
+    @Param('file') file: string,
+    @Res({ passthrough: true }) res: Response,
+  ): StreamableFile {
+    const { path, contentType, inline } = this.profile.resolvePreviewFile(
+      user.id,
+      track,
+      ts,
+      file,
+    );
+    const safeName = file.replace(/"/g, '');
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
+    });
+    return new StreamableFile(createReadStream(path));
   }
 }

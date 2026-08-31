@@ -29,6 +29,15 @@ export class UserPathsService {
     return safeJoin(this.root, userId, 'uploads');
   }
 
+  /**
+   * Dated preview-PDF runs — users/{id}/candidate/preview/<track>/<ts>/.
+   * Written by the bot's `preview` job kind (docs/PROFILE_PAGE_TABS.md T1);
+   * each run gets its own timestamped folder, never overwritten.
+   */
+  previewDir(userId: string): string {
+    return safeJoin(this.root, userId, 'candidate', 'preview');
+  }
+
   ensureUserDirs(userId: string): void {
     const dirs = [
       this.candidateDir(userId),
