@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import Database from 'better-sqlite3';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import request from 'supertest';
@@ -144,6 +144,27 @@ describe('ProfileModule tab read endpoints (e2e)', () => {
     db.close();
   }
 
+  /**
+   * Plant a parse job the way P3 wrote them BEFORE migration 004 added the
+   * profile_uploads table: no metadata row in app.sqlite, `{filename,
+   * sha256}` stashed directly in `result`.
+   */
+  function insertLegacyParseJob(
+    userId: string,
+    payload: string,
+    status: string,
+    result: string,
+  ): string {
+    const db = new Database(trackerDbPath);
+    const id = randomUUID();
+    db.prepare(
+      `INSERT INTO profile_jobs (id, user_id, kind, payload, status, result, created_at)
+       VALUES (?, ?, 'parse', ?, ?, ?, ?)`,
+    ).run(id, userId, payload, status, result, new Date().toISOString());
+    db.close();
+    return id;
+  }
+
   // ---------------------------------------------------------------------
   // GET /api/profile/files + GET /api/profile/files/:name
   // ---------------------------------------------------------------------
@@ -279,6 +300,9 @@ describe('ProfileModule tab read endpoints (e2e)', () => {
         .expect(201);
       const jobId = upload.body.jobId as string;
       const jobRow = readJobRow(jobId);
+      // The job row carries no upload metadata anymore — `result` is the
+      // bot's output slot (shared contract), empty until the drain job runs.
+      expect(jobRow.result).toBe('');
 
       const res = await authed('get', '/api/profile/uploads', tokenA).expect(
         200,
@@ -291,20 +315,22 @@ describe('ProfileModule tab read endpoints (e2e)', () => {
         createHash('sha256').update('resume text').digest('hex'),
       );
       expect(item.jobStatus).toBe('pending');
-      expect(item.uploadedAt).toBe(jobRow.created_at);
+      expect(item.uploadedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       // `id` is the stored upload uuid, distinct from `jobId`.
       expect(item.id).toMatch(/^[0-9a-f-]{36}$/);
       expect(item.id).not.toBe(item.jobId);
     });
 
-    it('once the bot overwrites result, filename is unrecoverable but sha256 is recomputed from disk', async () => {
+    it('filename and sha256 survive the bot overwriting result on completion', async () => {
       const upload = await authed('post', '/api/profile/uploads', tokenA)
         .attach('file', Buffer.from('another resume'), 'resume2.pdf')
         .expect(201);
       const jobId = upload.body.jobId as string;
 
       // Simulate the bot's drain job: it overwrites `result` with the real
-      // parse output (a draft profile JSON), not upload metadata.
+      // parse output (a draft profile JSON), not upload metadata. The
+      // metadata now lives in app.sqlite's profile_uploads (migration 004),
+      // so nothing is lost.
       markJobDone(jobId, JSON.stringify({ core: {}, leftovers: [] }));
 
       const res = await authed('get', '/api/profile/uploads', tokenA).expect(
@@ -313,10 +339,71 @@ describe('ProfileModule tab read endpoints (e2e)', () => {
       const item = (res.body as any[]).find((u) => u.jobId === jobId);
       expect(item).toBeDefined();
       expect(item.jobStatus).toBe('done');
-      expect(item.filename).toBeNull();
+      expect(item.filename).toBe('resume2.pdf');
       expect(item.sha256).toBe(
         createHash('sha256').update('another resume').digest('hex'),
       );
+    });
+
+    it('legacy parse jobs (pre-migration-004, no profile_uploads row) still appear', async () => {
+      // Pending legacy job: metadata still intact in `result`.
+      const pendingId = insertLegacyParseJob(
+        userIdA,
+        `uploads/${randomUUID()}.txt`,
+        'pending',
+        JSON.stringify({ filename: 'legacy.txt', sha256: 'a'.repeat(64) }),
+      );
+
+      // Done legacy job: `result` already overwritten by the bot, but the
+      // stored file still on disk → sha256 recomputed, filename gone.
+      const doneUuid = randomUUID();
+      const uploadsDir = join(usersRoot, userIdA, 'uploads');
+      mkdirSync(uploadsDir, { recursive: true });
+      writeFileSync(join(uploadsDir, `${doneUuid}.txt`), 'legacy content');
+      const doneId = insertLegacyParseJob(
+        userIdA,
+        `uploads/${doneUuid}.txt`,
+        'done',
+        JSON.stringify({ core: {}, leftovers: [] }),
+      );
+
+      const res = await authed('get', '/api/profile/uploads', tokenA).expect(
+        200,
+      );
+
+      const pending = (res.body as any[]).find((u) => u.jobId === pendingId);
+      expect(pending).toBeDefined();
+      expect(pending.filename).toBe('legacy.txt');
+      expect(pending.sha256).toBe('a'.repeat(64));
+      expect(pending.jobStatus).toBe('pending');
+
+      const done = (res.body as any[]).find((u) => u.jobId === doneId);
+      expect(done).toBeDefined();
+      expect(done.filename).toBeNull();
+      expect(done.sha256).toBe(
+        createHash('sha256').update('legacy content').digest('hex'),
+      );
+      expect(done.jobStatus).toBe('done');
+      expect(done.id).toBe(doneUuid);
+    });
+
+    it("an upload whose job row vanished still lists, with jobStatus 'unknown'", async () => {
+      const upload = await authed('post', '/api/profile/uploads', tokenA)
+        .attach('file', Buffer.from('orphaned resume'), 'orphan.md')
+        .expect(201);
+      const jobId = upload.body.jobId as string;
+
+      const db = new Database(trackerDbPath);
+      db.prepare(`DELETE FROM profile_jobs WHERE id = ?`).run(jobId);
+      db.close();
+
+      const res = await authed('get', '/api/profile/uploads', tokenA).expect(
+        200,
+      );
+      const item = (res.body as any[]).find((u) => u.jobId === jobId);
+      expect(item).toBeDefined();
+      expect(item.filename).toBe('orphan.md');
+      expect(item.jobStatus).toBe('unknown');
     });
 
     it("user B's uploads listing never includes user A's uploads", async () => {

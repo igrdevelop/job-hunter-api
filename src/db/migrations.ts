@@ -72,6 +72,31 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    up(db) {
+      // Durable upload metadata (docs/PROFILE_PAGE_TABS.md T2): the original
+      // client filename + sha256 used to live only in profile_jobs.result,
+      // which the bot's drain job overwrites with the parse output — this
+      // table is written once at POST /api/profile/uploads time and never
+      // touched by the bot, so the metadata survives job completion.
+      // job_id points at the parse row in tracker.db's profile_jobs (no FK —
+      // separate database).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS profile_uploads (
+          id          TEXT PRIMARY KEY,
+          user_id     TEXT NOT NULL,
+          filename    TEXT NOT NULL,
+          sha256      TEXT NOT NULL,
+          stored_path TEXT NOT NULL,
+          job_id      TEXT NOT NULL,
+          created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_uploads_user_id
+          ON profile_uploads(user_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

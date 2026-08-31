@@ -22,6 +22,15 @@ export interface RevisionRow {
   createdAt: string;
 }
 
+export interface UploadRow {
+  id: string;
+  filename: string;
+  sha256: string;
+  storedPath: string;
+  jobId: string;
+  createdAt: string;
+}
+
 // Keep the last N revisions per user (docs/RESUME_PROFILE_STORE.md).
 const KEEP_REVISIONS = 20;
 
@@ -114,12 +123,60 @@ export class ProfilesRepository {
       .get(userId, rev) as RevisionRow | undefined;
   }
 
-  /** Right-to-erasure (docs/RESUME_PROFILE_STORE.md): wipe both tables. */
+  /**
+   * Record one upload's durable metadata at POST /api/profile/uploads time
+   * (docs/PROFILE_PAGE_TABS.md T2). This row is the only place the original
+   * client filename survives — the parse job's `result` column belongs to
+   * the bot's output once the job completes.
+   */
+  insertUpload(row: {
+    id: string;
+    userId: string;
+    filename: string;
+    sha256: string;
+    storedPath: string;
+    jobId: string;
+  }): { createdAt: string } {
+    const createdAt = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO profile_uploads (id, user_id, filename, sha256, stored_path, job_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.userId,
+        row.filename,
+        row.sha256,
+        row.storedPath,
+        row.jobId,
+        createdAt,
+      );
+    return { createdAt };
+  }
+
+  listUploads(userId: string): UploadRow[] {
+    // `rowid` breaks ties for uploads landing in the same millisecond —
+    // same reasoning as ProfileService.getLastRenderJob's ordering.
+    return this.db
+      .prepare(
+        `SELECT id, filename, sha256, stored_path as storedPath,
+                job_id as jobId, created_at as createdAt
+         FROM profile_uploads WHERE user_id = ?
+         ORDER BY created_at DESC, rowid DESC`,
+      )
+      .all(userId) as UploadRow[];
+  }
+
+  /** Right-to-erasure (docs/RESUME_PROFILE_STORE.md): wipe all three tables. */
   deleteAllForUser(userId: string): void {
     const run = this.db.transaction(() => {
       this.db.prepare('DELETE FROM profiles WHERE user_id = ?').run(userId);
       this.db
         .prepare('DELETE FROM profile_revisions WHERE user_id = ?')
+        .run(userId);
+      this.db
+        .prepare('DELETE FROM profile_uploads WHERE user_id = ?')
         .run(userId);
     });
     run();

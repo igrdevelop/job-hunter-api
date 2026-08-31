@@ -172,7 +172,11 @@ export class ProfileService {
    * bot's parse job reads it) and hand off a parse job. The stored filename
    * is always `{uuid}.{ext}`; the client's original filename never touches
    * the filesystem path, so a hostile name (e.g. containing `..`) is inert —
-   * it only ever appears, basename'd, as display metadata on the job row.
+   * it only ever appears, basename'd, as display metadata in the
+   * `profile_uploads` row (app.sqlite, migration 004). That row — not the
+   * job's `result` column, which belongs to the bot's parse output per the
+   * shared contract — is what keeps `{filename, sha256}` durable across job
+   * completion.
    */
   uploadResume(
     userId: string,
@@ -193,17 +197,22 @@ export class ProfileService {
     writeFileSync(join(dir, fileName), file.buffer);
 
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
-    const metadata = JSON.stringify({
+    const storedPath = `uploads/${fileName}`;
+
+    // Job first, metadata row second (no cross-DB transaction — two
+    // better-sqlite3 connections): if the app.sqlite insert fails we're left
+    // with a metadata-less job, which listUploads() already tolerates via
+    // its legacy fallback. The reverse order could orphan a metadata row
+    // pointing at a job that never existed.
+    const jobId = this.createJob(userId, 'parse', storedPath);
+    this.repo.insertUpload({
+      id: uploadId,
+      userId,
       filename: basename(file.originalname),
       sha256,
+      storedPath,
+      jobId,
     });
-
-    const jobId = this.createJob(
-      userId,
-      'parse',
-      `uploads/${fileName}`,
-      metadata,
-    );
     return { jobId };
   }
 
@@ -322,28 +331,25 @@ export class ProfileService {
 
   /**
    * docs/PROFILE_PAGE_TABS.md T2, tab 1: the caller's uploads joined with
-   * each upload's parse-job status. There is no dedicated uploads table —
-   * `profile_jobs` (kind='parse') is the only durable record of an upload,
-   * one row per upload, `created_at` stamped exactly at upload time.
+   * each upload's parse-job status. The durable record is the
+   * `profile_uploads` table (app.sqlite, written at upload time, never
+   * touched by the bot) — so `filename`/`sha256` survive the bot's drain
+   * job overwriting `profile_jobs.result` with the real parse output.
+   * The join with job status is done in code: the two tables live in
+   * different databases (app.sqlite vs tracker.db).
    *
-   * Known gap (flagged 2026-08-30 work log, not fixed there because it's a
-   * cross-repo contract): the original client filename + sha256 are recorded
-   * in the job's `result` column ONLY at creation time
-   * (`ProfileService.uploadResume`) and get overwritten once the bot's drain
-   * job finishes the parse and writes its real output there — there is no
-   * separate durable store for upload metadata. So `filename`/`sha256` are
-   * only reliably available while the job is still `pending`/`running`.
-   * Once a job is `done`/`error`, `filename` is genuinely unrecoverable and
-   * comes back `null`; `sha256` is recomputed from the file still on disk
-   * (content-derived, so it's identical to the original) when that succeeds,
-   * `null` if the file itself is gone.
+   * Parse jobs with no `profile_uploads` row — uploads made before
+   * migration 004, or the (documented) crack where the job insert succeeded
+   * but the metadata insert didn't — still appear via the legacy path:
+   * `filename` from the metadata formerly stashed in `result` (only intact
+   * while the job is pending), `sha256` recomputed from the file on disk.
    */
   listUploads(userId: string): UploadListItem[] {
-    const rows = this.tracker.db
+    const uploads = this.repo.listUploads(userId);
+    const jobs = this.tracker.db
       .prepare(
         `SELECT id, payload, status, result, created_at as createdAt
-         FROM profile_jobs WHERE user_id = ? AND kind = 'parse'
-         ORDER BY created_at DESC, rowid DESC`,
+         FROM profile_jobs WHERE user_id = ? AND kind = 'parse'`,
       )
       .all(userId) as {
       id: string;
@@ -352,20 +358,40 @@ export class ProfileService {
       result: string;
       createdAt: string;
     }[];
+    const jobsById = new Map(jobs.map((j) => [j.id, j]));
 
-    return rows.map((row) => {
-      const meta = tryParseUploadMetadata(row.result);
-      const sha256 =
-        meta?.sha256 ?? this.recomputeUploadSha256(userId, row.payload);
-      return {
-        id: uploadIdFromPayload(row.payload),
+    // 'unknown' marks a metadata row whose job vanished from tracker.db —
+    // possible in principle (two DBs, no shared transaction) and better
+    // surfaced honestly than faked as 'pending'.
+    const items: UploadListItem[] = uploads.map((u) => ({
+      id: u.id,
+      filename: u.filename,
+      sha256: u.sha256,
+      uploadedAt: u.createdAt,
+      jobId: u.jobId,
+      jobStatus: jobsById.get(u.jobId)?.status ?? 'unknown',
+    }));
+
+    const knownJobIds = new Set(uploads.map((u) => u.jobId));
+    for (const job of jobs) {
+      if (knownJobIds.has(job.id)) continue;
+      const meta = tryParseUploadMetadata(job.result);
+      items.push({
+        id: uploadIdFromPayload(job.payload),
         filename: meta?.filename ?? null,
-        sha256,
-        uploadedAt: row.createdAt,
-        jobId: row.id,
-        jobStatus: row.status,
-      };
-    });
+        sha256: meta?.sha256 ?? this.recomputeUploadSha256(userId, job.payload),
+        uploadedAt: job.createdAt,
+        jobId: job.id,
+        jobStatus: job.status,
+      });
+    }
+
+    // Both sources emit ISO-8601 timestamps, so plain string comparison is
+    // a correct newest-first sort across the merged list.
+    items.sort((a, b) =>
+      a.uploadedAt < b.uploadedAt ? 1 : a.uploadedAt > b.uploadedAt ? -1 : 0,
+    );
+    return items;
   }
 
   private recomputeUploadSha256(
@@ -487,9 +513,11 @@ export class ProfileService {
 
   /**
    * Right-to-erasure (docs/RESUME_PROFILE_STORE.md): wipe every profile-store
-   * row for this user across both databases. The uploads/ directory itself
-   * is not removed here — it dies with the rest of users/{id}/ in
-   * AdminService.deleteUser, same as candidate/ and Applications/ today.
+   * row for this user across both databases — profiles/profile_revisions/
+   * profile_uploads in app.sqlite (one transaction in the repository) plus
+   * profile_jobs in tracker.db. The uploads/ directory itself is not removed
+   * here — it dies with the rest of users/{id}/ in AdminService.deleteUser,
+   * same as candidate/ and Applications/ today.
    */
   eraseUser(userId: string): void {
     this.repo.deleteAllForUser(userId);
@@ -524,20 +552,23 @@ export class ProfileService {
    * with the app.sqlite writes above (better-sqlite3 transactions are
    * per-connection): a lost job just means the next PUT/upload creates a
    * fresh one (docs/RESUME_PROFILE_STORE.md "Risks / decisions").
+   *
+   * `result` is always inserted empty: per the shared contract it belongs
+   * to the bot's output once the job completes. Upload metadata that used
+   * to be stashed there lives in app.sqlite's `profile_uploads` now.
    */
   private createJob(
     userId: string,
     kind: 'render' | 'parse' | 'preview',
     payload: string,
-    result = '',
   ): string {
     const id = randomUUID();
     this.tracker.db
       .prepare(
         `INSERT INTO profile_jobs (id, user_id, kind, payload, status, result, created_at)
-         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+         VALUES (?, ?, ?, ?, 'pending', '', ?)`,
       )
-      .run(id, userId, kind, payload, result, new Date().toISOString());
+      .run(id, userId, kind, payload, new Date().toISOString());
     return id;
   }
 }
