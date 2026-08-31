@@ -4,6 +4,12 @@ export default () => ({
     dbPath: process.env.APP_DB_PATH || './data/app.sqlite',
     registrationEnabled: process.env.REGISTRATION_ENABLED === 'true',
   },
+  // docs/PROFILE_PAGE_TABS.md T3: the single owner whose id gates the
+  // owner-only site UI (isOwner on /auth/me) — the same identity
+  // DEFAULT_USER_ID names on the bot side. Unset in a fresh/dev deployment
+  // (isOwner is then always false) until set once the owner's real user id
+  // is known.
+  owner: { userId: process.env.OWNER_USER_ID || '' },
   tracker: { dbPath: process.env.TRACKER_DB_PATH || './data/tracker.db' },
   // Per-user storage root: users/{userId}/{candidate,Applications,templates}/
   users: { root: process.env.USERS_ROOT || './data/users' },
