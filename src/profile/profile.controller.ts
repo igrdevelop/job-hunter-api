@@ -20,6 +20,8 @@ import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
+import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
   extensionOf,
@@ -97,6 +99,11 @@ export class ProfileController {
     return this.profile.listPreviews(user.id);
   }
 
+  // File-stream route: same pattern as FilesController/GeneratedController —
+  // skip the global JWT guard and accept either a bearer JWT or a ?dt=
+  // download token, since window.open cannot carry an Authorization header.
+  @Public()
+  @UseGuards(DownloadAuthGuard)
   @Get('previews/:track/:ts/:file')
   getPreviewFile(
     @CurrentUser() user: CurrentUserData,

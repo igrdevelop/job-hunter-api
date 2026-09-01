@@ -310,6 +310,44 @@ describe('ProfileModule preview flow (e2e)', () => {
     expect(Buffer.from(res.body).toString('utf8')).toBe('pdf-bytes-new');
   });
 
+  it('GET .../:file works with a ?dt= download token and no Authorization header', async () => {
+    // window.open cannot carry a bearer header — the site opens preview files
+    // with the download-token flow (DownloadAuthGuard), same as FilesController.
+    const tok = await authed('get', '/api/auth/download-token', tokenA).expect(
+      200,
+    );
+    const res = await request(app.getHttpServer())
+      .get(
+        `/api/profile/previews/react/2026-06-01T00-00-00Z/resume.pdf?dt=${encodeURIComponent(
+          tok.body.token as string,
+        )}`,
+      )
+      .expect(200);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(Buffer.from(res.body).toString('utf8')).toBe('pdf-bytes-new');
+  });
+
+  it("a ?dt= token still scopes to its own user — user B's dt cannot fetch A's file", async () => {
+    const tok = await authed('get', '/api/auth/download-token', tokenB).expect(
+      200,
+    );
+    await request(app.getHttpServer())
+      .get(
+        `/api/profile/previews/react/2026-06-01T00-00-00Z/resume.pdf?dt=${encodeURIComponent(
+          tok.body.token as string,
+        )}`,
+      )
+      .expect(404);
+  });
+
+  it('a garbage ?dt= token is rejected with 401', async () => {
+    await request(app.getHttpServer())
+      .get(
+        '/api/profile/previews/react/2026-06-01T00-00-00Z/resume.pdf?dt=not-a-jwt',
+      )
+      .expect(401);
+  });
+
   it('GET .../:file 404s for a file that does not exist', async () => {
     await authed(
       'get',
