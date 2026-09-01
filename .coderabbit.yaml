@@ -1,0 +1,58 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/reference/configuration
+# First line of automated PR review. CLAUDE.md is the source of truth for the
+# invariants summarized below — update this digest when they change.
+
+language: "en-US"
+
+tone_instructions: >-
+  Be direct and concise. Prioritize real bugs, security issues (auth scoping,
+  path traversal, injection) and cross-repo contract violations over style
+  nits — ESLint/Prettier already cover formatting.
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!dist/**"
+    - "!package-lock.json"
+  path_instructions:
+    - path: "src/**"
+      instructions: >-
+        NestJS API sharing SQLite files and volumes with a Python bot
+        (separate repo owns the pipeline). Invariants (full text in CLAUDE.md):
+        (1) tracker.db schema is OWNED by the bot — this API reads freely but
+        may write ONLY the Sent / To Learn / Re-application / app_status
+        fields; flag any other tracker.db write, and any DDL against it.
+        The app's own schema lives in app.sqlite only.
+        (2) Everything is multi-user: queries against tracker.db and any
+        filesystem access under users/{userId}/ must be scoped to the
+        authenticated user — flag missing user filters and any path built
+        from request input without traversal protection (the files/generated/
+        templates modules serve paths taken from URLs).
+        (3) Endpoints require the JWT guard unless explicitly public
+        (auth, health); download-token (aud='download') endpoints accept the
+        short-lived ?dt= token only where already designed to.
+        (4) DTOs are validated with class-validator — flag handlers that read
+        raw body/query fields without a validated DTO.
+        (5) better-sqlite3 is synchronous — flag heavy queries or file I/O
+        that would block the event loop on hot request paths.
+        (6) Shared contracts with the bot repo (profile_jobs queue DDL,
+        telegram_link_codes, docs/RESUME_PROFILE_STORE.md) must not drift —
+        flag changes to those shapes that aren't called out as cross-repo.
+    - path: ".github/workflows/**"
+      instructions: >-
+        deploy.yml is the SOLE writer of docker-compose.prod.yml on the VPS,
+        covering both the api and frontend service definitions — flag changes
+        that break that single-writer ownership or drop the .bak backup step.
+    - path: "test/**"
+      instructions: >-
+        Flag tests that stub the module under test instead of its
+        boundaries, and e2e tests that depend on live VPS state.
+
+chat:
+  auto_reply: true
