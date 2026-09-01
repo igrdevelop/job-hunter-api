@@ -33,6 +33,7 @@ describe('isOwner on GET /auth/me (e2e)', () => {
   let tokenOwner: string;
   let tokenOther: string;
   let ownerId: string;
+  let otherId: string;
 
   beforeAll(async () => {
     const root = mkdtempSync(join(tmpdir(), 'auth-owner-e2e-'));
@@ -46,8 +47,11 @@ describe('isOwner on GET /auth/me (e2e)', () => {
     process.env.REGISTRATION_ENABLED = 'true';
     delete process.env.OWNER_USER_ID;
 
-    // Phase 1: no OWNER_USER_ID configured yet — seed the owner, register a
-    // second user, and confirm isOwner is false for BOTH when unset.
+    // Phase 1: no OWNER_USER_ID configured — isOwner now derives from
+    // role='admin' (the seeded owner), so the owner is TRUE with zero config
+    // (revised 2026-09-01: the deploy workflow rewrites .env on the VPS, so
+    // an env-only mechanism was wiped on every deploy) and the registered
+    // second user (role 'user') is false.
     const moduleFixture1: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -66,7 +70,7 @@ describe('isOwner on GET /auth/me (e2e)', () => {
       .set('Authorization', `Bearer ${tokenOwner}`)
       .expect(200);
     ownerId = meOwnerBefore.body.id as string;
-    expect(meOwnerBefore.body.isOwner).toBe(false);
+    expect(meOwnerBefore.body.isOwner).toBe(true);
 
     await request(app1.getHttpServer())
       .post('/auth/register')
@@ -90,12 +94,15 @@ describe('isOwner on GET /auth/me (e2e)', () => {
       .set('Authorization', `Bearer ${tokenOther}`)
       .expect(200);
     expect(meOtherBefore.body.isOwner).toBe(false);
+    otherId = meOtherBefore.body.id as string;
 
     await app1.close();
 
-    // Phase 2: configure OWNER_USER_ID to the id discovered above and boot
-    // a fresh app instance against the same on-disk state.
-    process.env.OWNER_USER_ID = ownerId;
+    // Phase 2: OWNER_USER_ID is now an optional NARROWING override — when
+    // set, it alone decides ownership, role included. Point it at the
+    // non-admin second user and boot a fresh app against the same on-disk
+    // state: the admin must lose isOwner, the named user must gain it.
+    process.env.OWNER_USER_ID = otherId;
     const moduleFixture2: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -109,22 +116,22 @@ describe('isOwner on GET /auth/me (e2e)', () => {
     delete process.env.OWNER_USER_ID;
   });
 
-  it('owner token → isOwner: true once OWNER_USER_ID is configured', async () => {
+  it('an OWNER_USER_ID override beats role — the admin loses isOwner', async () => {
     const res = await request(app2.getHttpServer())
       .get('/auth/me')
       .set('Authorization', `Bearer ${tokenOwner}`)
       .expect(200);
     expect(res.body.id).toBe(ownerId);
-    expect(res.body.isOwner).toBe(true);
+    expect(res.body.isOwner).toBe(false);
   });
 
-  it('a different user token → isOwner: false', async () => {
+  it('the user named by the override gains isOwner despite role user', async () => {
     const res = await request(app2.getHttpServer())
       .get('/auth/me')
       .set('Authorization', `Bearer ${tokenOther}`)
       .expect(200);
-    expect(res.body.id).not.toBe(ownerId);
-    expect(res.body.isOwner).toBe(false);
+    expect(res.body.id).toBe(otherId);
+    expect(res.body.isOwner).toBe(true);
   });
 
   it('unauthenticated GET /auth/me is unchanged (401, no body leak)', async () => {

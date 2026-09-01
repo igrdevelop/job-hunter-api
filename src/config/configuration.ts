@@ -4,11 +4,11 @@ export default () => ({
     dbPath: process.env.APP_DB_PATH || './data/app.sqlite',
     registrationEnabled: process.env.REGISTRATION_ENABLED === 'true',
   },
-  // docs/PROFILE_PAGE_TABS.md T3: the single owner whose id gates the
-  // owner-only site UI (isOwner on /auth/me) — the same identity
-  // DEFAULT_USER_ID names on the bot side. Unset in a fresh/dev deployment
-  // (isOwner is then always false) until set once the owner's real user id
-  // is known.
+  // docs/PROFILE_PAGE_TABS.md T3 (revised 2026-09-01): optional NARROWING
+  // override for isOwner on /auth/me. Normally isOwner derives from
+  // role='admin' (zero config, survives deploys — the workflow rewrites
+  // .env on the VPS, which wiped the original env-only mechanism); set this
+  // only in a multi-admin deployment where a single admin is "the owner".
   owner: { userId: process.env.OWNER_USER_ID || '' },
   tracker: { dbPath: process.env.TRACKER_DB_PATH || './data/tracker.db' },
   // Per-user storage root: users/{userId}/{candidate,Applications,templates}/
