@@ -126,7 +126,7 @@ the sole owner/writer of that compose file.
 | `APP_BASE_URL` | no | Base URL for email links (default: `https://job-hunter.igrflex.work`) |
 | `SEED_USER_EMAIL` | no | Owner email, seeded on first start |
 | `SEED_USER_PASSWORD` | no | Owner password, seeded on first start |
-| `OWNER_USER_ID` | no | The seeded owner's `users.id` (app.sqlite) — same identity `DEFAULT_USER_ID` names on the bot side. Gates `isOwner` on `GET /auth/me` (docs/PROFILE_PAGE_TABS.md T3): unset means `isOwner` is always `false`. Deliberately NOT `role='admin'` — that role gates platform administration (a future multi-admin deployment), a distinct concept from "the one person whose curated profile drives the owner-only site UI". Set once the seeded owner's real id is known (e.g. via `GET /auth/me` right after first boot). |
+| `OWNER_USER_ID` | no | Optional NARROWING override for `isOwner` on `GET /auth/me` (docs/PROFILE_PAGE_TABS.md T3, revised 2026-09-01). Normally `isOwner` derives from `role='admin'` with zero config — the original env-only mechanism was wiped on every deploy (the workflow rewrites `.env` on the VPS; live incident 2026-09-01). Set only in a multi-admin deployment where exactly one admin is "the owner"; when set, it alone decides ownership. |
 
 ---
 
@@ -141,8 +141,8 @@ POST /auth/resend          { email }           → { ok: true }
 
 # Auth (JWT required)
 GET  /auth/me              → { id, email, role, emailVerified, isOwner }  (docs/PROFILE_PAGE_TABS.md
-                              T3: isOwner = caller's id === the configured OWNER_USER_ID; false when
-                              that env var is unset, never a guess — gates owner-only site UI)
+                              T3 (revised 2026-09-01): isOwner = role==='admin' when OWNER_USER_ID is
+                              unset; when set, id===OWNER_USER_ID alone decides — gates owner-only site UI)
 GET  /auth/download-token  → { token }  (5-min aud='download' JWT for window.open)
 
 # Applications (JWT required, user-scoped)
@@ -308,3 +308,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-09-01 | fable | Live-site fix: GET /api/profile/previews/:track/:ts/:file now carries `@Public()` + `@UseGuards(DownloadAuthGuard)` (the FilesController/GeneratedController pattern) instead of relying on the global JWT guard alone — the site opens preview files via `window.open(...?dt=<download token>)`, which cannot send an Authorization header, so every preview download failed with 401 ("Could not open the file." on the Test Resume tab, first reported by the owner minutes after deploy). ProfileModule now imports AuthModule for the guard's deps. 3 new e2e cases in profile-preview.e2e-spec.ts: the dt flow end-to-end (no auth header), user B's dt token still scoping to B (404 on A's file), and a garbage dt → 401 — the download-token flow previously had zero e2e coverage anywhere. |
 | 2026-09-01 | fable | Added `.coderabbit.yaml` — CodeRabbit auto-review on every PR (free open-source tier). Digest of the repo invariants: tracker.db is bot-owned (API writes only Sent/To Learn/Re-application/app_status), user-scoped queries + path-traversal protection in files/generated/templates modules, JWT guards, class-validator DTOs, synchronous better-sqlite3 on hot paths, deploy.yml as sole docker-compose.prod.yml writer, cross-repo contract stability (profile_jobs, RESUME_PROFILE_STORE.md). Same setup added to the bot and site repos in the same change. Activation: owner installs the CodeRabbit GitHub App on the repo. |
 | 2026-09-01 | fable | Added `.claude/commands/pr.md` — local `/pr` pre-flight: branch hygiene (cut from current origin/master, never rebase), `npm run build` + eslint (no `--fix`) + jest gates, then a mandatory `code-review` skill pass on the diff (CONFIRMED correctness findings are a hard stop) before `gh pr create`. Mirrors the bot repo's `/pr`; CodeRabbit remains the post-publication reviewer. |
+| 2026-09-01 | fable | isOwner rebased onto `role='admin'` (live incident, same day): the deploy workflow is the sole writer of BOTH `docker-compose.prod.yml` and `.env` on the VPS, so the hand-configured `OWNER_USER_ID` was wiped on the very next deploy and the owner's own owner-only tabs vanished from the live site. `AuthService.isOwner()` now returns `role==='admin'` with zero configuration; `OWNER_USER_ID` remains honored as an optional NARROWING override (when set, it alone decides — covered by reworked `auth-owner.e2e-spec.ts` phase 2, which now points the override at the non-admin user and asserts the admin LOSES isOwner while the named user gains it). Config/env-table comments updated. |

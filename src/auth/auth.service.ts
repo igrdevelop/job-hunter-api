@@ -110,18 +110,23 @@ export class AuthService implements OnModuleInit {
   }
 
   /**
-   * docs/PROFILE_PAGE_TABS.md T3: gates the owner-only site UI (tab 4 +
-   * the variant chip row). Mechanism is a configured owner user id
-   * (`OWNER_USER_ID`, the same identity `DEFAULT_USER_ID` names on the bot
-   * side) rather than the existing `role='admin'` — `role` gates platform
-   * ADMINISTRATION (user management), a distinct concept from "the one
-   * person whose curated profile drives these owner-only features", and a
-   * future multi-admin deployment must not conflate the two. Unset
-   * `OWNER_USER_ID` means isOwner is always false, never a guess.
+   * docs/PROFILE_PAGE_TABS.md T3 (revised 2026-09-01): gates the owner-only
+   * site UI (the Rendered Files tab + the variant chip row). Derived from
+   * `role='admin'` — the original T3 shipped a configured `OWNER_USER_ID`
+   * instead, but the deploy workflow is the sole writer of both the compose
+   * file AND `.env` on the VPS, so the hand-added variable was silently
+   * wiped on the very next deploy and the owner lost the owner-only tabs
+   * (live incident, 2026-09-01). A DB-backed role cannot be un-deployed.
+   * `OWNER_USER_ID` remains honored as an optional narrowing override for a
+   * hypothetical multi-admin deployment where only one admin is "the owner".
    */
   isOwner(userId: string): boolean {
     const ownerId = this.config.get<string>('owner.userId');
-    return !!ownerId && userId === ownerId;
+    if (ownerId) {
+      return userId === ownerId;
+    }
+    const user = this.users.findById(userId);
+    return user?.role === 'admin';
   }
 
   private async sendVerificationEmail(user: User): Promise<void> {
