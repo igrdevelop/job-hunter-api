@@ -273,6 +273,10 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 - PRs get an automatic CodeRabbit review (`.coderabbit.yaml` in the repo root
   carries a digest of these invariants — update it when they change; this
   file stays the source of truth). Same setup in the bot and site repos.
+- Git hooks: enable once per clone with `git config core.hooksPath .githooks`
+  — pre-commit refuses protected files (.env, data/, *.sqlite, tokens) and
+  runs eslint on staged TS; commit-msg strips editor attribution trailers.
+  NOTE: repo-local hooksPath overrides any global hooks dir.
 - Open PRs via the `/pr` command (`.claude/commands/pr.md`): branch-from-
   current-origin/master hygiene, build + lint + test gates, and a mandatory
   code-review pass on the diff BEFORE the PR opens (CodeRabbit only sees it

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Pre-commit gate (enable once per clone: git config core.hooksPath .githooks)
+# 1) refuse never-commit files; 2) eslint on staged TS (check only, no --fix).
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+blocked=""
+for f in $staged; do
+  case "$f" in
+    .env|.env.local|data/*|*.sqlite|*token*.json|*credentials*.json)
+      blocked="$blocked  $f
+";;
+  esac
+done
+if [ -n "$blocked" ]; then
+  printf "pre-commit: refusing to commit protected files:\n%s" "$blocked" >&2
+  printf "Bypass (only if you are sure): git commit --no-verify\n" >&2
+  exit 1
+fi
+
+ts=$(printf '%s\n' "$staged" | grep -E '^(src|test|apps|libs)/.*\.ts$')
+if [ -n "$ts" ]; then
+  # shellcheck disable=SC2086
+  npx --no-install eslint $ts || {
+    printf "pre-commit: eslint failed on staged files\n" >&2
+    exit 1
+  }
+fi
+
+exit 0
