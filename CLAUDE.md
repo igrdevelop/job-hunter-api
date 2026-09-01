@@ -141,8 +141,8 @@ POST /auth/resend          { email }           → { ok: true }
 
 # Auth (JWT required)
 GET  /auth/me              → { id, email, role, emailVerified, isOwner }  (docs/PROFILE_PAGE_TABS.md
-                              T3 (revised 2026-09-01): isOwner = role==='admin', or === OWNER_USER_ID when
-                              that env var is unset, never a guess — gates owner-only site UI)
+                              T3 (revised 2026-09-01): isOwner = role==='admin' when OWNER_USER_ID is
+                              unset; when set, id===OWNER_USER_ID alone decides — gates owner-only site UI)
 GET  /auth/download-token  → { token }  (5-min aud='download' JWT for window.open)
 
 # Applications (JWT required, user-scoped)

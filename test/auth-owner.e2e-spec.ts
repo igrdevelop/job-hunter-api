@@ -11,15 +11,16 @@ import { AppModule } from '../src/app.module';
 /**
  * docs/PROFILE_PAGE_TABS.md T3 — isOwner on GET /auth/me.
  *
- * OWNER_USER_ID isn't knowable before the owner account exists (it's a
- * randomUUID minted by `AuthService.registerOwner` at seed time), so this
- * spec runs in two phases against the SAME on-disk app.sqlite/tracker.db/
- * users root: phase 1 boots a normal app instance to seed the owner and
- * register a second, non-owner user, discovering both ids; phase 2 sets
- * OWNER_USER_ID to the discovered owner id and boots a FRESH app instance
- * against the same files (the seed step in AuthService.onModuleInit no-ops
- * once users already exist) — mirroring how a real deployment configures
- * the env var once the owner's real user id is known, then restarts.
+ * Revised 2026-09-01: isOwner derives from role='admin' with zero config;
+ * OWNER_USER_ID is an optional NARROWING override that alone decides when
+ * set. User ids aren't knowable before the app boots (randomUUID at seed
+ * time), so this spec runs in two phases against the SAME on-disk
+ * app.sqlite/tracker.db/users root: phase 1 boots with the env unset —
+ * the seeded admin is the owner by role, the registered second user is
+ * not — and discovers both ids; phase 2 points OWNER_USER_ID at the
+ * NON-admin user and boots a FRESH app instance against the same files
+ * (the seed step in AuthService.onModuleInit no-ops once users exist),
+ * proving the override beats role in both directions.
  * JWTs minted in phase 1 stay valid in phase 2 (same JWT_SECRET).
  */
 describe('isOwner on GET /auth/me (e2e)', () => {
