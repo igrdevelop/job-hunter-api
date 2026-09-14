@@ -5,6 +5,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
+import { contentDisposition } from '../common/content-disposition';
 import { GeneratedService } from './generated.service';
 
 @Controller('generated')
@@ -46,10 +47,12 @@ export class GeneratedController {
       company,
       file,
     );
-    const safeName = file.replace(/"/g, '');
     res.set({
       'Content-Type': contentType,
-      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
+      'Content-Disposition': contentDisposition(
+        inline ? 'inline' : 'attachment',
+        file,
+      ),
     });
     return new StreamableFile(createReadStream(path));
   }
