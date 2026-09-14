@@ -74,10 +74,15 @@ export function todayIsoDate(timeZone: string = BOT_TIMEZONE): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
 }
 
-/** UTC timestamp matching the bot's own outcome_at stamps (hunter/tracker.py
- * ::set_outcome and friends use this exact %Y-%m-%dT%H:%M:%SZ shape). */
+/** UTC timestamp matching the bot's own outcome_at stamps. hunter/tracker.py
+ * ::set_outcome (and mark_orphans_expired) write
+ * `datetime.now(timezone.utc).isoformat(timespec="seconds")`, which for an
+ * aware UTC datetime is `YYYY-MM-DDTHH:MM:SS+00:00` — NOT a trailing `Z`
+ * (verified via `git show origin/master:hunter/tracker.py` in the bot repo,
+ * 2026-09-14). A prior version of this function produced `...Z`, which never
+ * matched what the bot itself writes to the same column. */
 export function nowIsoSeconds(): string {
-  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00');
 }
 
 // The two "not applying" statuses that may carry an owner_reason. Reused by

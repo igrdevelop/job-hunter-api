@@ -228,6 +228,12 @@ export class TrackerService {
    *    `appStatus` if present, else the row's current `app_status` — per
    *    OWNER_REASONS' per-status allowlist (e.g. `salary` is Skipped-only).
    *    Violating either → BadRequestException, nothing written at all.
+   *  - The body may not send a non-empty `ownerReasonNote` together with an
+   *    explicit `ownerReason: ''` in the same PATCH — that combination
+   *    contradicts itself (clearing the reason while attaching a comment to
+   *    it) → BadRequestException, nothing written. A body that only clears
+   *    `ownerReason` without mentioning the note at all is NOT rejected; the
+   *    stored note is left as-is (simpler than guessing intent).
    *  - Whenever the resulting `appStatus` is NOT Skipped/Filter miss
    *    (including the body explicitly clearing it to `''`), both
    *    owner_reason and owner_reason_note are reset to `''` — a corrected
@@ -236,8 +242,25 @@ export class TrackerService {
    *    touched the reason fields), and can only happen after the validation
    *    above already passed, since a non-empty reason on a non-decline
    *    resulting status is rejected before any write occurs.
+   *  - Otherwise (resulting status stays Skipped/Filter miss) — if the body
+   *    does NOT send `ownerReason` at all, the STORED reason is re-checked
+   *    against the resulting status and cleared (note left alone) if it's no
+   *    longer allowed there. This closes a gap where e.g. PATCH
+   *    `{appStatus:'Filter miss'}` on a row whose stored owner_reason is
+   *    `salary` (Skipped-only) used to leave that now-invalid combination in
+   *    place, because 'Filter miss' is still a decline status so the
+   *    unconditional reset above never fired.
    *  - owner_reason/owner_reason_note are API-owned, like app_status: never
    *    part of SHEETS_MIRRORED_COLUMNS, so they never dirty the Sheet row.
+   *
+   * `appStatus: ''` (Clear) on a row that WAS Skipped/Filter miss and whose
+   * `sent` is still the bot's own dash marker also undoes that marker (see
+   * `deriveFromAppStatus`'s `''` branch) — a mis-clicked decline can be
+   * fully undone in one click. It never touches a genuine date/EXPIRED/free
+   * text in `sent`, and it never touches `outcome_label`/`outcome_at`
+   * (clearing those stays Telegram `/outcome <id> clear` — the bot's own
+   * Sheet-pull would silently undo an api-side clear, same reasoning as the
+   * "never clear an outcome" rule below).
    *
    * Returns null / throws NotFoundException for an unknown id or another
    * user's row, exactly like the individual field updates used to, and
@@ -253,10 +276,15 @@ export class TrackerService {
     const run = this.db.transaction(() => {
       const current = this.db
         .prepare(
-          `SELECT sent, app_status${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
+          `SELECT sent, app_status, owner_reason${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
         )
         .get(id, userId) as
-        | { sent: string; app_status: string; outcome_label?: string }
+        | {
+            sent: string;
+            app_status: string;
+            owner_reason: string;
+            outcome_label?: string;
+          }
         | undefined;
       if (!current) {
         throw new NotFoundException(`Application ${id} not found`);
@@ -274,6 +302,11 @@ export class TrackerService {
       ) {
         throw new BadRequestException(
           `ownerReason "${dto.ownerReason}" is not allowed for status "${resultingStatus || '(none)'}"`,
+        );
+      }
+      if (dto.ownerReason === '' && dto.ownerReasonNote) {
+        throw new BadRequestException(
+          'ownerReasonNote must be empty when ownerReason is cleared to ""',
         );
       }
 
@@ -301,6 +334,16 @@ export class TrackerService {
       ) {
         this.setColumn(userId, id, 'owner_reason', '');
         this.setColumn(userId, id, 'owner_reason_note', '');
+      } else if (
+        dto.ownerReason === undefined &&
+        current.owner_reason &&
+        !isOwnerReasonAllowedForStatus(current.owner_reason, resultingStatus)
+      ) {
+        // The body didn't touch ownerReason, but a status change (or
+        // pre-existing bad data) left the STORED reason invalid for the
+        // resulting status — e.g. Skipped+'salary' PATCHed to Filter miss.
+        // Clear the reason only; the note is free text and may still apply.
+        this.setColumn(userId, id, 'owner_reason', '');
       }
 
       if (dto.appStatus !== undefined) {
@@ -312,6 +355,7 @@ export class TrackerService {
             id,
             dto.appStatus as AppStatus,
             current.sent,
+            current.app_status as AppStatus,
             hasOutcomeColumns,
             current.outcome_label ?? '',
           );
@@ -321,7 +365,16 @@ export class TrackerService {
       return this.getApplicationById(userId, id);
     });
 
-    return run();
+    // IMMEDIATE, not the library default DEFERRED: a DEFERRED transaction
+    // only takes SQLite's write lock at its first write statement, so the
+    // SELECT above runs against a snapshot that can go stale if the bot's
+    // process commits a write to the same row between our SELECT and our
+    // first UPDATE — the subsequent lock upgrade then fails with
+    // SQLITE_BUSY_SNAPSHOT (a snapshot conflict, not a plain lock wait, so
+    // `busy_timeout` does not retry it) and the whole PATCH 500s. IMMEDIATE
+    // takes the write lock up front, before the SELECT even runs, closing
+    // that window.
+    return run.immediate();
   }
 
   private deriveFromAppStatus(
@@ -329,6 +382,7 @@ export class TrackerService {
     id: string,
     status: AppStatus,
     currentSent: string,
+    previousStatus: AppStatus,
     hasOutcomeColumns: boolean,
     currentOutcomeLabel: string,
   ): void {
@@ -351,8 +405,22 @@ export class TrackerService {
       if (trimmedSent === '') {
         this.setColumn(userId, id, 'sent', NOT_APPLYING_SENT_MARKER);
       }
+    } else if (status === '') {
+      // Clear ("Undo" a mis-clicked decline): only when the row was
+      // PREVIOUSLY a decline status (Skipped/Filter miss) AND `sent` still
+      // holds the bot's own dash marker this API wrote — never a bot-written
+      // dash on a row whose appStatus was never a decline value (that dash
+      // came from the bot's own SKIP/FAIL handling and must not resurface in
+      // Unsent), and never a real date/EXPIRED/free text. Excludes '' itself
+      // from the dash check (an already-blank sent has nothing to undo).
+      if (
+        (NOT_APPLYING_STATUSES as readonly string[]).includes(previousStatus) &&
+        trimmedSent !== '' &&
+        (DASH_MARKERS as readonly string[]).includes(trimmedSent)
+      ) {
+        this.setColumn(userId, id, 'sent', '');
+      }
     }
-    // '' (no status): nothing — falls into neither branch above.
   }
 
   private setColumn(

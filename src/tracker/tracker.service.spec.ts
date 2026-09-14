@@ -354,6 +354,93 @@ describe('TrackerService.updateApplication', () => {
         sheets_dirty: 0,
       });
     });
+
+    it('clears a stale owner_reason left invalid by a status change, keeping the note, when the body omits ownerReason', () => {
+      // 'salary' is Skipped-only. Move Skipped -> Filter miss WITHOUT
+      // mentioning ownerReason at all: the row must not keep an invalid
+      // reason/status combination just because Filter miss is still a
+      // decline status (the unconditional "moved off decline" reset never
+      // fires here, since Filter miss IS a decline status).
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'salary',
+        ownerReasonNote: 'below range',
+      });
+      service.updateApplication(userId, liveId, { appStatus: 'Filter miss' });
+      expect(rowState(liveId)).toMatchObject({
+        app_status: 'Filter miss',
+        owner_reason: '',
+        owner_reason_note: 'below range',
+      });
+    });
+
+    it('leaves a still-valid stored reason untouched across a decline-to-decline status change', () => {
+      // Sanity check for the same code path: a reason that's allowed for
+      // BOTH decline statuses must survive Skipped -> Filter miss.
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'duplicate',
+        ownerReasonNote: 'seen before',
+      });
+      service.updateApplication(userId, liveId, { appStatus: 'Filter miss' });
+      expect(rowState(liveId)).toMatchObject({
+        app_status: 'Filter miss',
+        owner_reason: 'duplicate',
+        owner_reason_note: 'seen before',
+      });
+    });
+
+    it('rejects an explicit contradiction — ownerReason "" with a non-empty ownerReasonNote in the same body — and writes nothing', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'stack',
+        ownerReasonNote: 'heavy backend',
+      });
+      expect(() =>
+        service.updateApplication(userId, liveId, {
+          ownerReason: '',
+          ownerReasonNote: 'still relevant somehow',
+        }),
+      ).toThrow(BadRequestException);
+      // Unchanged: the contradiction is rejected before any write happens.
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: 'stack',
+        owner_reason_note: 'heavy backend',
+      });
+    });
+
+    it('allows clearing ownerReason alone (no ownerReasonNote in the body) without 400, leaving the stored note as-is', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'stack',
+        ownerReasonNote: 'heavy backend',
+      });
+      expect(() =>
+        service.updateApplication(userId, liveId, { ownerReason: '' }),
+      ).not.toThrow();
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: '',
+        owner_reason_note: 'heavy backend',
+      });
+    });
+
+    it('allows ownerReason "" together with ownerReasonNote "" (both explicitly cleared)', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'stack',
+        ownerReasonNote: 'heavy backend',
+      });
+      expect(() =>
+        service.updateApplication(userId, liveId, {
+          ownerReason: '',
+          ownerReasonNote: '',
+        }),
+      ).not.toThrow();
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: '',
+        owner_reason_note: '',
+      });
+    });
   });
 
   describe('appStatus derivation onto sent', () => {
@@ -431,6 +518,68 @@ describe('TrackerService.updateApplication', () => {
     it('a blank status derives nothing', () => {
       service.updateApplication(userId, liveId, { appStatus: '' });
       expect(rowState(liveId).sent).toBe('');
+    });
+
+    describe('Clear (appStatus "") undoes a mis-clicked decline', () => {
+      it.each(['Skipped', 'Filter miss'])(
+        'clears the dash sent marker this API wrote when undoing a %s',
+        (status) => {
+          service.updateApplication(userId, liveId, { appStatus: status });
+          expect(rowState(liveId).sent).toBe('—'); // the marker this API just derived
+          service.updateApplication(userId, liveId, { appStatus: '' });
+          expect(rowState(liveId).sent).toBe('');
+        },
+      );
+
+      it('does not touch a bot-written dash sent when the row was never a decline appStatus', () => {
+        // Simulates the bot's own SKIP/FAIL dash stamp on a row whose
+        // web-only appStatus was never set to a decline value — that dash
+        // must not resurface the row in Unsent just because someone clicked
+        // Clear on an unrelated status.
+        service.db
+          .prepare(`UPDATE applications SET sent = ? WHERE id = ?`)
+          .run('—', liveId);
+        service.updateApplication(userId, liveId, { appStatus: '' });
+        expect(rowState(liveId).sent).toBe('—');
+      });
+
+      it('does not touch a real sent date when Clear undoes a decline status', () => {
+        service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+        service.db
+          .prepare(`UPDATE applications SET sent = ? WHERE id = ?`)
+          .run('2026-01-01', liveId);
+        service.updateApplication(userId, liveId, { appStatus: '' });
+        expect(rowState(liveId).sent).toBe('2026-01-01');
+      });
+
+      it('does not touch sent at all when the body includes an explicit sent alongside appStatus ""', () => {
+        service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+        expect(rowState(liveId).sent).toBe('—');
+        service.updateApplication(userId, liveId, {
+          appStatus: '',
+          sent: 'restored-value',
+        });
+        expect(rowState(liveId).sent).toBe('restored-value');
+      });
+
+      it('never touches outcome_label/outcome_at when undoing a decline status (there is nothing to derive there)', () => {
+        service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+        expect(() =>
+          service.updateApplication(userId, liveId, { appStatus: '' }),
+        ).not.toThrow();
+        // No outcome columns on this schema at all — the point is simply
+        // that Clear's own derivation path never calls setOutcome().
+        expect(rowState(liveId).sent).toBe('');
+      });
+
+      it('the cleared sent write still marks sheets_dirty when sheets_row is set (normal dirty rule)', () => {
+        service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+        service.db
+          .prepare(`UPDATE applications SET sheets_dirty = 0 WHERE id = ?`)
+          .run(liveId);
+        service.updateApplication(userId, liveId, { appStatus: '' });
+        expect(rowState(liveId)).toMatchObject({ sent: '', sheets_dirty: 1 });
+      });
     });
 
     it('derives without crashing when tracker.db lacks outcome_label/outcome_at', () => {
@@ -524,8 +673,10 @@ describe('TrackerService.updateApplication outcome derivation (schema with outco
       service.updateApplication(userId, liveId, { appStatus: status });
       const state = outcomeState(liveId);
       expect(state.outcome_label).toBe(label);
+      // Matches the bot's own `datetime.now(timezone.utc).isoformat(timespec="seconds")`
+      // shape (`+00:00`, not a trailing `Z`) — see app-status.ts::nowIsoSeconds.
       expect(state.outcome_at).toMatch(
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$/,
       );
     },
   );
@@ -580,6 +731,95 @@ describe('TrackerService.updateApplication outcome derivation (schema with outco
       appStatus: 'Interview',
     });
     expect(outcomeState(liveId).outcome_label).toBe('');
+  });
+});
+
+describe('updateApplication transaction locking (SQLITE_BUSY_SNAPSHOT regression guard)', () => {
+  // updateApplication SELECTs the current row, then (conditionally) writes.
+  // better-sqlite3's db.transaction() defaults to BEGIN DEFERRED, which
+  // takes no lock at all until the first statement runs and fixes its read
+  // snapshot at that first statement (our SELECT) — if a concurrent writer
+  // (the bot process) commits between that SELECT and our own first write,
+  // the write's lock-upgrade fails with SQLITE_BUSY_SNAPSHOT, which
+  // busy_timeout does NOT retry (it's a snapshot conflict, not a lock wait).
+  // The fix is `run.immediate()`, which issues BEGIN IMMEDIATE and so takes
+  // the write lock up front, before our SELECT even runs.
+  //
+  // better-sqlite3 does not expose the literal BEGIN/COMMIT SQL through the
+  // public `Database.prototype.prepare` (verified: only statements the
+  // application itself prepares are observable that way), so the exact
+  // journal mode can't be asserted by inspecting SQL text. Instead this test
+  // observes the LOCK behavior directly: a second raw connection to the
+  // SAME on-disk file attempts a real write at the instant our own
+  // "read the current row" SELECT is prepared — i.e. strictly after
+  // updateApplication's transaction has begun. With `busy_timeout = 0` on
+  // that second connection (fail immediately, no retry), its write can only
+  // succeed if our own transaction has NOT yet taken the write lock at that
+  // point — which is exactly the DEFERRED bug. If our transaction is
+  // IMMEDIATE (the fix), the write lock is already held and the second
+  // connection's write throws synchronously.
+  it('already holds the write lock before its own first SELECT runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tracker-lock-'));
+    const trackerPath = join(dir, 'tracker.db');
+    const appPath = join(dir, 'app.sqlite');
+
+    const seed = new Database(trackerPath);
+    seed.exec(BASE_SCHEMA);
+    seed
+      .prepare(
+        `INSERT INTO applications (id, user_id, company, sent, sheets_row, sheets_dirty)
+         VALUES ('live1234', 'user-1', 'Acme', '', 12, 0)`,
+      )
+      .run();
+    seed.close();
+
+    const config = {
+      get: (key: string) => {
+        if (key === 'tracker.dbPath') return trackerPath;
+        if (key === 'app.dbPath') return appPath;
+        return undefined;
+      },
+    } as unknown as ConfigService;
+    const service = new TrackerService(config);
+
+    const second = new Database(trackerPath);
+    second.pragma('journal_mode = WAL');
+    second.pragma('busy_timeout = 0'); // fail fast, no retry
+
+    let concurrentWriteThrew = false;
+    // Capture the ORIGINAL bound method (not a dynamic `service.db.prepare`
+    // lookup, which would re-enter the mock installed below and recurse
+    // forever) with an explicit type — `.bind()` on a generic method like
+    // `prepare` otherwise resolves to `any` under TS, which is what made
+    // this an unsafe `any` in the first place.
+    const originalPrepare = service.db.prepare.bind(service.db) as (
+      sql: string,
+    ) => Database.Statement;
+    jest
+      .spyOn(service.db, 'prepare')
+      .mockImplementation((sql: string): Database.Statement => {
+        if (sql.startsWith('SELECT sent, app_status, owner_reason')) {
+          try {
+            second
+              .prepare(
+                `UPDATE applications SET sent = 'concurrent' WHERE id = ?`,
+              )
+              .run('live1234');
+          } catch {
+            concurrentWriteThrew = true;
+          }
+        }
+        return originalPrepare(sql);
+      });
+
+    try {
+      service.updateApplication('user-1', 'live1234', { appStatus: 'Sent' });
+      expect(concurrentWriteThrew).toBe(true);
+    } finally {
+      second.close();
+      service.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
