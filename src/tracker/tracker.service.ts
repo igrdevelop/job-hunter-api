@@ -292,19 +292,19 @@ export class TrackerService {
       if (dto.ownerReasonNote !== undefined) {
         this.setColumn(userId, id, 'owner_reason_note', dto.ownerReasonNote);
       }
+      // Keyed off the RESULTING status, not just a body appStatus: a lone
+      // ownerReasonNote patched onto a non-decline row must not survive as an
+      // orphan comment. Validation above already rejected a non-empty
+      // ownerReason here, so resetting both fields is always safe.
+      if (
+        !(NOT_APPLYING_STATUSES as readonly string[]).includes(resultingStatus)
+      ) {
+        this.setColumn(userId, id, 'owner_reason', '');
+        this.setColumn(userId, id, 'owner_reason_note', '');
+      }
+
       if (dto.appStatus !== undefined) {
         this.setColumn(userId, id, 'app_status', dto.appStatus);
-
-        if (
-          !(NOT_APPLYING_STATUSES as readonly string[]).includes(dto.appStatus)
-        ) {
-          // Already validated above: a non-empty ownerReason can only reach
-          // here if resultingStatus (== dto.appStatus, this branch) is a
-          // decline status, so this branch only runs when dto.ownerReason is
-          // absent or '' — safe to unconditionally reset both fields.
-          this.setColumn(userId, id, 'owner_reason', '');
-          this.setColumn(userId, id, 'owner_reason_note', '');
-        }
 
         if (dto.sent === undefined) {
           this.deriveFromAppStatus(

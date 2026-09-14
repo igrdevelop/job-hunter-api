@@ -297,6 +297,16 @@ describe('TrackerService.updateApplication', () => {
       });
     });
 
+    it('drops a lone ownerReasonNote patched onto a non-decline row', () => {
+      service.updateApplication(userId, liveId, { appStatus: 'Sent' });
+      service.updateApplication(userId, liveId, { ownerReasonNote: 'orphan' });
+      expect(rowState(liveId)).toMatchObject({
+        app_status: 'Sent',
+        owner_reason: '',
+        owner_reason_note: '',
+      });
+    });
+
     it('does not touch reason fields when appStatus stays a decline status and the body omits reason', () => {
       service.updateApplication(userId, liveId, {
         appStatus: 'Skipped',
