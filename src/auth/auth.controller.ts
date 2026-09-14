@@ -9,9 +9,10 @@ import {
 import { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import { UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { ClientIpThrottlerGuard } from './client-ip-throttler.guard';
 import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -20,7 +21,7 @@ interface AuthenticatedRequest extends Request {
   user: { id: string; email: string; role: string };
 }
 
-@UseGuards(ThrottlerGuard)
+@UseGuards(ClientIpThrottlerGuard)
 @Throttle({ default: { ttl: 60_000, limit: 30 } })
 @Controller('auth')
 export class AuthController {
