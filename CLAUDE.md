@@ -50,7 +50,9 @@ service against it).
 **Two SQLite databases:**
 - `app.sqlite` — own DB, `users` table plus `profiles`/`profile_revisions`
   (docs/RESUME_PROFILE_STORE.md — the structured resume profile document +
-  its revision history). NestJS owns schema for both.
+  its revision history) and `profile_uploads` (durable upload metadata:
+  original filename/sha256/stored_path per resume upload, written at POST
+  time, never touched by the bot). NestJS owns schema for both.
 - `tracker.db` — bot's DB, mounted via Docker volume. Bot owns schema;
   NestJS reads freely + writes only Sent/To Learn/Re-application. Also has
   `profile_jobs` (render/parse handoff, API writes/bot drains — same
@@ -185,7 +187,7 @@ GET /api/settings/global   → { categories: [...] } (admin only, masked bot .en
 GET /api/filters           → { defaults, overrides, effective, meta }
 PUT /api/filters           body=overrides only → fresh GET payload (400 + per-field errors)
 
-# Profile (JWT required) — structured resume profile, app.sqlite (profiles/profile_revisions)
+# Profile (JWT required) — structured resume profile, app.sqlite (profiles/profile_revisions/profile_uploads)
 GET  /api/profile                        → { profile, revision, updatedAt, lastRenderJob }  (404 if none
                                             yet; lastRenderJob = { id, status, updatedAt } | null — the
                                             caller's most recent kind='render' profile_jobs row, docs/
@@ -199,19 +201,18 @@ POST /api/profile/revisions/:rev/restore → same response as PUT
 GET  /api/profile/jobs/:id               → { kind, status, result?, error? }  (poll; 404 across users)
 POST /api/profile/uploads                multipart file (docx|pdf|txt|md, ≤10MB) → 201 { jobId }
                                             (throttled 10/hour/user; stored as users/{id}/uploads/{uuid}.ext,
-                                             original filename/sha256 kept in the job row's result only)
+                                             original filename/sha256/stored_path recorded in app.sqlite's
+                                             profile_uploads at POST time — the job row's `result` stays
+                                             empty, it belongs to the bot's parse output per the contract)
 GET  /api/profile/uploads                → [ { id, filename, sha256, uploadedAt, jobId, jobStatus } ]
-                                            (docs/PROFILE_PAGE_TABS.md T2, tab 1) — derived from profile_jobs
-                                            kind='parse' rows, newest first; `id` is the stored upload uuid
-                                            (distinct from `jobId`). KNOWN GAP: `filename`/`sha256` only come
-                                            from the job's `result` column, which the bot's drain job
-                                            overwrites with its real parse output once the job leaves
-                                            pending/running — so once a job is done/error, `filename` comes
-                                            back `null` (genuinely unrecoverable, no separate durable store)
-                                            and `sha256` is recomputed from the uploaded file still on disk
-                                            (null if that file is gone too). Flagged, not fixed, in the
-                                            2026-08-30 work log entry — changing `result`'s contract needs
-                                            cross-repo sign-off.
+                                            (docs/PROFILE_PAGE_TABS.md T2, tab 1) — profile_uploads rows
+                                            joined in code with each parse job's status, newest first; `id`
+                                            is the stored upload uuid (distinct from `jobId`); metadata
+                                            survives job completion. Legacy parse jobs without a
+                                            profile_uploads row (pre-migration-004 uploads) still list via
+                                            the old path: filename from the metadata once stashed in
+                                            `result` (null once the bot overwrote it), sha256 recomputed
+                                            from the file on disk.
 POST /api/profile/preview                body { track } → 201 { jobId }  (docs/PROFILE_PAGE_TABS.md T1;
                                             throttled 10/hour/user; track must match ^[a-z][a-z0-9_]*$,
                                             "core" included; 409 when the caller has no stored profile;
@@ -245,7 +246,7 @@ GET  /api/telegram/status    → { linked: boolean, chatId? }
 # Admin (JWT required, role=admin)
 GET    /api/admin/users
 PATCH  /api/admin/users/:id  { disabled: boolean }
-DELETE /api/admin/users/:id  (also erases profiles/profile_revisions + profile_jobs rows)
+DELETE /api/admin/users/:id  (also erases profiles/profile_revisions/profile_uploads + profile_jobs rows)
 
 # Health (public)
 GET /health → { status: "ok" }
@@ -315,3 +316,5 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-09-01 | fable | Added `.coderabbit.yaml` — CodeRabbit auto-review on every PR (free open-source tier) [**superseded**: the free tier stopped auto-reviewing repos under 10 GitHub stars, observed here from 2026-09-08; every PR now needs a manual `@coderabbitai review` comment]. Digest of the repo invariants: tracker.db is bot-owned (API writes only Sent/To Learn/Re-application/app_status), user-scoped queries + path-traversal protection in files/generated/templates modules, JWT guards, class-validator DTOs, synchronous better-sqlite3 on hot paths, deploy.yml as sole docker-compose.prod.yml writer, cross-repo contract stability (profile_jobs, RESUME_PROFILE_STORE.md). Same setup added to the bot and site repos in the same change. Activation: owner installs the CodeRabbit GitHub App on the repo. |
 | 2026-09-01 | fable | Added `.claude/commands/pr.md` — local `/pr` pre-flight: branch hygiene (cut from current origin/master, never rebase), `npm run build` + eslint (no `--fix`) + jest gates, then a mandatory `code-review` skill pass on the diff (CONFIRMED correctness findings are a hard stop) before `gh pr create`. Mirrors the bot repo's `/pr`; CodeRabbit remains the post-publication reviewer. |
 | 2026-09-01 | fable | isOwner rebased onto `role='admin'` (live incident, same day): the deploy workflow is the sole writer of BOTH `docker-compose.prod.yml` and `.env` on the VPS, so the hand-configured `OWNER_USER_ID` was wiped on the very next deploy and the owner's own owner-only tabs vanished from the live site. `AuthService.isOwner()` now returns `role==='admin'` with zero configuration; `OWNER_USER_ID` remains honored as an optional NARROWING override (when set, it alone decides — covered by reworked `auth-owner.e2e-spec.ts` phase 2, which now points the override at the non-admin user and asserts the admin LOSES isOwner while the named user gains it). Config/env-table comments updated. |
+| 2026-08-31 | fable | Durable upload metadata — properly fixes the `profile_jobs.result` gap flagged 2026-08-30 and re-confirmed in the T2 entry. Migration 004 (app.sqlite): `profile_uploads` (id = stored upload uuid, user_id, filename, sha256, stored_path, job_id, created_at + user_id index; `job_id` is a soft reference into tracker.db's `profile_jobs` — no FK across databases). `ProfileService.uploadResume` now writes that row at POST time and inserts the parse job with an EMPTY `result` — the metadata stash in `result` is gone, restoring the shared contract (`result` = the bot's output once a job completes; a poller no longer sees a non-empty `result` on a pending job), so the long-flagged cross-repo ambiguity is resolved API-side without touching `payload`'s shape or anything the bot drains. `GET /api/profile/uploads` serves from `profile_uploads` joined in code (two DBs) with each job's status; `filename`/`sha256` now survive `done`/`error`. Kept a legacy fallback for parse jobs with no `profile_uploads` row (uploads made before this migration exist in production tracker.db, POST has been live since P3): old behavior — filename from `tryParseUploadMetadata(result)` while pending, `null` after the bot overwrote it, sha256 re-hashed from disk; a metadata row whose job row vanished reports `jobStatus: 'unknown'` rather than faking `pending`. Erasure: `ProfilesRepository.deleteAllForUser` wipes `profile_uploads` in the same transaction as `profiles`/`profile_revisions`, so the existing `AdminService.deleteUser` → `ProfileService.eraseUser` path needed no wiring change — e2e asserts zero `profile_uploads` rows post-delete. Tests updated: `profile.e2e-spec.ts` upload assertions moved from `result`-metadata to the `profile_uploads` row (+ `result` asserted empty at creation), `profile-tabs.e2e-spec.ts`'s "filename is unrecoverable" flipped to "filename survives completion", plus new legacy-fallback (pending + done planted job rows) and vanished-job-row cases. Suites green: unit 30/30, e2e 72/72. Built with the same short-path junctioned `node_modules` workaround as the T2 entry (`npm ci --ignore-scripts` at `%TEMP%\jhapi_nm`). Stacked on PR #25's branch (`claude/profile-page-tabs-t2`) since `GET /api/profile/uploads` only exists there. [**Never reached master** — see the 2026-09-14 re-land entry below.] |
+| 2026-09-14 | opus | Re-landed the durable upload metadata change (the 2026-08-31 `profile_uploads` entry above) — it had been stranded off master. Incident: PR #27 (commit `40cf2bac`) targeted the stacked branch `claude/profile-page-tabs-t2`, and was merged into that branch ~9 seconds AFTER the branch itself (PR #25) had already merged to master; GitHub does not retarget or re-propagate a PR merged into an already-merged base, so #27 showed "merged" while master never got it (`git merge-base --is-ancestor 40cf2bac origin/master` false). Production kept the pre-fix behavior for two weeks: `ProfileService.uploadResume` stashed `{filename, sha256}` in `profile_jobs.result`, which the bot's drain job overwrites, so `GET /api/profile/uploads` lost the filename of every completed upload. Fix: `git cherry-pick 40cf2bac` onto a fresh branch from `origin/master`. Source files auto-merged against everything that landed since (T3 `isOwner` on `role='admin'`, the preview `?dt=` download-token fix, docs/CodeRabbit changes) — none of them touch `src/db/migrations.ts`'s version list or the upload paths; migration 004 re-verified as the next free version (master tops out at 003). The only conflict was this file's work log tail (both sides appended rows) — resolved by keeping master's 2026-09-01 rows followed by the original 2026-08-31 entry, annotated as stranded, plus this row; also updated the endpoint table's admin DELETE line and Profile section header to name `profile_uploads`. Re-checked the invariants: `profile_jobs.payload` stays the bare `uploads/{uuid}.{ext}` path (bot contract), `createJob` inserts an empty `result` for render/parse/preview alike, `ProfilesRepository.deleteAllForUser` wipes `profile_uploads` in the same transaction, and the legacy fallback (parse jobs with no `profile_uploads` row — i.e. every upload made in production before this deploy) still lists them. Gates: build clean; unit 30/30; e2e 76/78 — the 2 failures are the pre-existing `test/profile-preview.e2e-spec.ts` `?dt=` cases calling `/api/auth/download-token` instead of `/auth/download-token`, identical on master (74/76), fixed on a separate branch. Lessons: when a stacked base branch merges first, retarget the child PR to master before merging it, and confirm with `git merge-base --is-ancestor <sha> origin/master` after merge. |
