@@ -42,6 +42,15 @@ export function runTrackerMigrations(
     );
   }
 
+  // Free-text note from the web UI (why not applying, or any remark).
+  // API-owned like app_status: never mirrored to Sheets, bot never reads or
+  // writes it; defaulted so the bot's explicit-column INSERTs are safe.
+  if (cols.length > 0 && !cols.includes('note')) {
+    trackerDb.exec(
+      `ALTER TABLE applications ADD COLUMN note TEXT NOT NULL DEFAULT ''`,
+    );
+  }
+
   // These tables are always created idempotently regardless of user_id column.
   trackerDb.exec(`
     CREATE TABLE IF NOT EXISTS user_settings (

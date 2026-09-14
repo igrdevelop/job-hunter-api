@@ -2,7 +2,18 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Database from 'better-sqlite3';
 import { runTrackerMigrations } from '../db/tracker-migrations';
+import {
+  APPLIED_STATUSES,
+  AppStatus,
+  DASH_MARKERS,
+  NOT_APPLYING_SENT_MARKER,
+  NOT_APPLYING_STATUSES,
+  nowIsoSeconds,
+  OUTCOME_BY_STATUS,
+  todayIsoDate,
+} from './app-status';
 import { Application } from './dto/application.dto';
+import { UpdateApplicationDto } from './dto/update.dto';
 import {
   QueryApplicationsDto,
   SortableColumn,
@@ -38,7 +49,7 @@ const APPLICATION_COLUMNS = `
   id, date, company, title, stack,
   ats_status as atsStatus, url, folder, sent,
   to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict,
-  reapplication, drive_url as driveUrl, app_status as appStatus
+  reapplication, drive_url as driveUrl, app_status as appStatus, note
 `;
 
 // Source of truth: COLUMNS in the bot's hunter/gsheets_client.py (A–K).
@@ -47,14 +58,17 @@ const APPLICATION_COLUMNS = `
 // never sees the row, so the sheet stays stale.
 const SHEETS_MIRRORED_COLUMNS = ['sent', 'to_learn', 'reapplication'] as const;
 type SheetsMirroredColumn = (typeof SHEETS_MIRRORED_COLUMNS)[number];
-type UpdatableColumn = SheetsMirroredColumn | 'app_status';
+// app_status/note are API-owned (never mirrored); outcome_label/outcome_at
+// are bot-owned but written here (see updateApplication) through the same
+// dirty-if-still-on-the-sheet rule as a mirrored column.
+type UpdatableColumn = SheetsMirroredColumn | 'app_status' | 'note';
 
 @Injectable()
 export class TrackerService {
   readonly db: Database.Database;
 
   constructor(private readonly config: ConfigService) {
-    this.db = new Database(this.config.get<string>('tracker.dbPath')!);
+    this.db = new Database(this.config.get<string>('tracker.dbPath'));
     // Shared with the bot process — WAL for reader/writer concurrency;
     // busy_timeout so a short bot write doesn't fail our PATCH with SQLITE_BUSY.
     this.db.pragma('journal_mode = WAL');
@@ -77,7 +91,10 @@ export class TrackerService {
     runTrackerMigrations(this.db, ownerUserId);
   }
 
-  getApplications(userId: string, params: QueryApplicationsDto): PaginatedResult<Application> {
+  getApplications(
+    userId: string,
+    params: QueryApplicationsDto,
+  ): PaginatedResult<Application> {
     const page = params.page ?? 1;
     const limit = params.limit ?? 50;
     const sort: SortableColumn = params.sort ?? 'date';
@@ -113,7 +130,12 @@ export class TrackerService {
 
     return {
       data,
-      meta: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
     };
   }
 
@@ -173,38 +195,129 @@ export class TrackerService {
     };
   }
 
-  updateSent(userId: string, id: string, sent: string): void {
-    this.updateField(userId, id, 'sent', sent);
+  /**
+   * Applies every present field on the PATCH body in one transaction, then
+   * derives sent/outcome_label/outcome_at from `appStatus` per the plan's
+   * mapping table (docs/APPLICATIONS_STATUS_NOTE_PLAN.md "Design" section):
+   *  - An "applied" status (Sent/Interview/Rejected/Offer/Silence) fills
+   *    `sent` with today's date ONLY when it is still blank or a dash
+   *    marker — a real date, EXPIRED, or old free text is never overwritten.
+   *    The four with a matching bot outcome label also set outcome_label +
+   *    outcome_at, but only when the label actually differs from what's
+   *    already stored (never re-stamp outcome_at for no reason) — and NEVER
+   *    to clear one (the bot's own Sheet-pull would silently undo a clear).
+   *  - A "not applying" status (Skipped/Filter miss) fills `sent` with the
+   *    bot's own em-dash marker, but only when `sent` is genuinely empty.
+   *  - Derivation is skipped entirely when the same PATCH body also sends an
+   *    explicit `sent` — that edit always wins, and lets a client restore
+   *    both fields exactly (e.g. an undo/revert flow).
+   * Returns null / throws NotFoundException for an unknown id or another
+   * user's row, exactly like the individual field updates used to, and
+   * writes nothing in that case.
+   */
+  updateApplication(
+    userId: string,
+    id: string,
+    dto: UpdateApplicationDto,
+  ): Application | null {
+    const hasOutcomeColumns = this.hasOutcomeColumns();
+
+    const run = this.db.transaction(() => {
+      const current = this.db
+        .prepare(
+          `SELECT sent${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
+        )
+        .get(id, userId) as
+        { sent: string; outcome_label?: string } | undefined;
+      if (!current) {
+        throw new NotFoundException(`Application ${id} not found`);
+      }
+
+      if (dto.sent !== undefined) {
+        this.setColumn(userId, id, 'sent', dto.sent);
+      }
+      if (dto.toLearn !== undefined) {
+        this.setColumn(userId, id, 'to_learn', dto.toLearn);
+      }
+      if (dto.reapplication !== undefined) {
+        this.setColumn(userId, id, 'reapplication', dto.reapplication);
+      }
+      if (dto.note !== undefined) {
+        this.setColumn(userId, id, 'note', dto.note);
+      }
+      if (dto.appStatus !== undefined) {
+        this.setColumn(userId, id, 'app_status', dto.appStatus);
+
+        if (dto.sent === undefined) {
+          this.deriveFromAppStatus(
+            userId,
+            id,
+            dto.appStatus as AppStatus,
+            current.sent,
+            hasOutcomeColumns,
+            current.outcome_label ?? '',
+          );
+        }
+      }
+
+      return this.getApplicationById(userId, id);
+    });
+
+    return run();
   }
 
-  updateToLearn(userId: string, id: string, toLearn: string): void {
-    this.updateField(userId, id, 'to_learn', toLearn);
+  private deriveFromAppStatus(
+    userId: string,
+    id: string,
+    status: AppStatus,
+    currentSent: string,
+    hasOutcomeColumns: boolean,
+    currentOutcomeLabel: string,
+  ): void {
+    const trimmedSent = currentSent.trim();
+
+    if ((APPLIED_STATUSES as readonly string[]).includes(status)) {
+      if ((DASH_MARKERS as readonly string[]).includes(trimmedSent)) {
+        this.setColumn(userId, id, 'sent', todayIsoDate());
+      }
+
+      const outcomeLabel = OUTCOME_BY_STATUS[status];
+      if (
+        outcomeLabel &&
+        hasOutcomeColumns &&
+        currentOutcomeLabel !== outcomeLabel
+      ) {
+        this.setOutcome(userId, id, outcomeLabel);
+      }
+    } else if ((NOT_APPLYING_STATUSES as readonly string[]).includes(status)) {
+      if (trimmedSent === '') {
+        this.setColumn(userId, id, 'sent', NOT_APPLYING_SENT_MARKER);
+      }
+    }
+    // '' (no status): nothing — falls into neither branch above.
   }
 
-  updateReapplication(userId: string, id: string, reapplication: string): void {
-    this.updateField(userId, id, 'reapplication', reapplication);
-  }
-
-  updateAppStatus(userId: string, id: string, appStatus: string): void {
-    this.updateField(userId, id, 'app_status', appStatus);
-  }
-
-  private updateField(
+  private setColumn(
     userId: string,
     id: string,
     column: UpdatableColumn,
     value: string,
   ): void {
     // Column name is interpolated from a closed union — not user input.
-    // app_status is API-owned and not in the A–K mirror; dirtying it would
-    // make resync_dirty() overwrite the whole sheet row for a column that
-    // is not there.
+    // Dirty status is derived from the same SHEETS_MIRRORED_COLUMNS list
+    // that drives resync_dirty() on the bot side — never passed in by the
+    // caller, so a column can't accidentally be dirtied/not-dirtied out of
+    // step with that list.
+    const mirrored = (SHEETS_MIRRORED_COLUMNS as readonly string[]).includes(
+      column,
+    );
+    // app_status/note are API-owned and not in the A–K mirror; dirtying them
+    // would make resync_dirty() overwrite the whole sheet row for columns
+    // that aren't there.
     // sheets_row IS NULL means the row was never pushed, or the owner
     // deleted it from the sheet (mark_orphans_expired). Dirtying that
     // would append a resurrected row via resync_dirty() → append_rows.
-    const setDirty = (SHEETS_MIRRORED_COLUMNS as readonly UpdatableColumn[]).includes(
-      column,
-    )
+    const setDirty = mirrored
       ? ', sheets_dirty = CASE WHEN sheets_row IS NOT NULL THEN 1 ELSE sheets_dirty END'
       : '';
     const result = this.db
@@ -212,6 +325,36 @@ export class TrackerService {
         `UPDATE applications SET ${column} = ?${setDirty} WHERE id = ? AND user_id = ?`,
       )
       .run(value, id, userId);
+    if (result.changes === 0) {
+      throw new NotFoundException(`Application ${id} not found`);
+    }
+  }
+
+  // outcome_label/outcome_at are bot-owned columns (docs/improvement-2026-09/
+  // 08-DATA_EVAL_PLAN.md M1) that may not exist on an older tracker.db —
+  // checked live (not cached at startup) since the bot can add them to a
+  // running tracker.db independently of this API process's lifecycle.
+  private hasOutcomeColumns(): boolean {
+    const cols = (
+      this.db.prepare('PRAGMA table_info(applications)').all() as {
+        name: string;
+      }[]
+    ).map((r) => r.name);
+    return cols.includes('outcome_label') && cols.includes('outcome_at');
+  }
+
+  private setOutcome(userId: string, id: string, label: string): void {
+    // Same "never resurrect a sheet-deleted row" dirty guard as setColumn's
+    // mirrored path — the bot's own set_outcome() dirties unconditionally,
+    // but this API keeps its existing orphan-row protection.
+    const result = this.db
+      .prepare(
+        `UPDATE applications
+         SET outcome_label = ?, outcome_at = ?,
+             sheets_dirty = CASE WHEN sheets_row IS NOT NULL THEN 1 ELSE sheets_dirty END
+         WHERE id = ? AND user_id = ?`,
+      )
+      .run(label, nowIsoSeconds(), id, userId);
     if (result.changes === 0) {
       throw new NotFoundException(`Application ${id} not found`);
     }

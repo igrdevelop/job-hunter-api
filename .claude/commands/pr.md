@@ -53,8 +53,10 @@ did not.
   the cheap, obvious ones, file the rest as follow-ups.
 - Pay extra attention to this repo's invariants (CLAUDE.md Conventions +
   `.coderabbit.yaml` digest): bot-owned tracker.db (only Sent/To Learn/
-  Re-application/app_status writable), user scoping and path-traversal
-  protection in file-serving modules, JWT guards, validated DTOs.
+  Re-application/app_status/note writable by this API, plus the bot-owned
+  outcome_label/outcome_at pair which is set-only and never cleared), user
+  scoping and path-traversal protection in file-serving modules, JWT guards,
+  validated DTOs.
 
 This is the pre-publication pass. CodeRabbit (`.coderabbit.yaml`) reviews the
 PR *after* it opens — this step is what catches problems while they are still

@@ -26,9 +26,11 @@ reviews:
         NestJS API sharing SQLite files and volumes with a Python bot
         (separate repo owns the pipeline). Invariants (full text in CLAUDE.md):
         (1) tracker.db schema is OWNED by the bot — this API reads freely but
-        may write ONLY the Sent / To Learn / Re-application / app_status
-        fields; flag any other tracker.db write, and any DDL against it.
-        The app's own schema lives in app.sqlite only.
+        may write ONLY the Sent / To Learn / Re-application / app_status /
+        note fields, plus the bot-owned outcome_label / outcome_at pair
+        (set-only — never clear an outcome, see TrackerService.updateApplication);
+        flag any other tracker.db write, and any DDL against it. The app's
+        own schema lives in app.sqlite only.
         (2) Everything is multi-user: queries against tracker.db and any
         filesystem access under users/{userId}/ must be scoped to the
         authenticated user — flag missing user filters and any path built

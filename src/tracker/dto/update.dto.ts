@@ -1,4 +1,5 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { APP_STATUS_OPTIONS } from '../app-status';
 
 export class UpdateApplicationDto {
   @IsOptional()
@@ -14,6 +15,11 @@ export class UpdateApplicationDto {
   reapplication?: string;
 
   @IsOptional()
-  @IsString()
+  @IsIn(APP_STATUS_OPTIONS)
   appStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  note?: string;
 }
