@@ -136,8 +136,9 @@ the sole owner/writer of that compose file.
 # Auth (public, rate-limited: 30/min per IP)
 POST /auth/register        { email, password } → { id, email }   (gated by REGISTRATION_ENABLED)
 POST /auth/login           { email, password } → { accessToken }
-POST /auth/verify          { token }           → { ok: true }
-POST /auth/resend          { email }           → { ok: true }
+POST /auth/verify          { token }           → { ok: true }   (400 non-string/empty token, 403 unknown/expired)
+POST /auth/resend          { email }           → { ok: true }   (400 malformed email; a well-formed unknown
+                                                                  email still gets { ok: true } — no existence leak)
 
 # Auth (JWT required)
 GET  /auth/me              → { id, email, role, emailVerified, isOwner }  (docs/PROFILE_PAGE_TABS.md
@@ -244,8 +245,10 @@ GET  /api/telegram/status    → { linked: boolean, chatId? }
 
 # Admin (JWT required, role=admin)
 GET    /api/admin/users
-PATCH  /api/admin/users/:id  { disabled: boolean }
-DELETE /api/admin/users/:id  (also erases profiles/profile_revisions + profile_jobs rows)
+PATCH  /api/admin/users/:id  { disabled?: boolean }  (400 non-boolean, 404 unknown id,
+                              403 when an admin disables their own account)
+DELETE /api/admin/users/:id  (also erases profiles/profile_revisions + profile_jobs rows;
+                              404 unknown id, 403 when an admin deletes their own account)
 
 # Health (public)
 GET /health → { status: "ok" }
@@ -315,3 +318,4 @@ Full cross-repo plan: `docs/WEB_APP_PLAN.md` in the bot repo.
 | 2026-09-01 | fable | Added `.coderabbit.yaml` — CodeRabbit auto-review on every PR (free open-source tier) [**superseded**: the free tier stopped auto-reviewing repos under 10 GitHub stars, observed here from 2026-09-08; every PR now needs a manual `@coderabbitai review` comment]. Digest of the repo invariants: tracker.db is bot-owned (API writes only Sent/To Learn/Re-application/app_status), user-scoped queries + path-traversal protection in files/generated/templates modules, JWT guards, class-validator DTOs, synchronous better-sqlite3 on hot paths, deploy.yml as sole docker-compose.prod.yml writer, cross-repo contract stability (profile_jobs, RESUME_PROFILE_STORE.md). Same setup added to the bot and site repos in the same change. Activation: owner installs the CodeRabbit GitHub App on the repo. |
 | 2026-09-01 | fable | Added `.claude/commands/pr.md` — local `/pr` pre-flight: branch hygiene (cut from current origin/master, never rebase), `npm run build` + eslint (no `--fix`) + jest gates, then a mandatory `code-review` skill pass on the diff (CONFIRMED correctness findings are a hard stop) before `gh pr create`. Mirrors the bot repo's `/pr`; CodeRabbit remains the post-publication reviewer. |
 | 2026-09-01 | fable | isOwner rebased onto `role='admin'` (live incident, same day): the deploy workflow is the sole writer of BOTH `docker-compose.prod.yml` and `.env` on the VPS, so the hand-configured `OWNER_USER_ID` was wiped on the very next deploy and the owner's own owner-only tabs vanished from the live site. `AuthService.isOwner()` now returns `role==='admin'` with zero configuration; `OWNER_USER_ID` remains honored as an optional NARROWING override (when set, it alone decides — covered by reworked `auth-owner.e2e-spec.ts` phase 2, which now points the override at the non-admin user and asserts the admin LOSES isOwner while the named user gains it). Config/env-table comments updated. |
+| 2026-09-14 | opus | Closed three ValidationPipe bypasses: the global `ValidationPipe` only validates parameters typed with a decorated CLASS, so `PATCH /api/admin/users/:id` (`@Body() body: { disabled?: boolean }`, an erased inline type) accepted `{"disabled":"false"}` — truthy, so it DISABLED the user — and `POST /auth/verify`/`/auth/resend` (`@Body('token')`/`@Body('email')`) let an object reach better-sqlite3, which throws `RangeError` → 500. New DTOs `UpdateUserDto` (`src/admin/dto/`; `@ValidateIf(present) @IsBoolean()` rather than `@IsOptional()`, which would also wave an explicit `null` through), `VerifyEmailDto`, `ResendVerificationDto` (`src/auth/dto/`). PATCH on an unknown id now 404s (was 200 with an empty body). An admin disabling (`disabled: true`) or deleting their OWN account now gets 403 — 403 rather than 400 because the body is well-formed; it is a policy refusal of who may act on whom, and on the single-admin VPS it would lock the deployment out of administration (`{disabled:false}` on self stays allowed, a no-op). Resend's no-existence-leak behavior unchanged. Note for test authors: e2e specs build the app via `Test.createTestingModule`, NOT `src/main.ts`, so none of them had the global pipe before — the new `test/admin-auth-validation.e2e-spec.ts` installs the same pipe explicitly. 16 new e2e cases (13 of them fail against the old controllers). |
