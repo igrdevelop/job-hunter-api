@@ -543,6 +543,37 @@ describe('TrackerService.updateApplication', () => {
         expect(rowState(liveId).sent).toBe('—');
       });
 
+      it('does not touch a bot-written dash sent even when the row WAS marked Skipped (ats_status is the bot SKIP/FAIL stamp)', () => {
+        // The scenario `previousStatus` alone can't distinguish: the bot
+        // stamps '—' at INSERT time (ats_status='SKIP'), before this API's
+        // appStatus is ever touched. The owner later marks it 'Skipped' here
+        // too (sent was already non-blank, so nothing changes), then clicks
+        // Clear. Without the ats_status provenance check, this used to wipe
+        // the bot's own dash and resurface the row in Unsent.
+        service.db
+          .prepare(
+            `UPDATE applications SET sent = ?, ats_status = ? WHERE id = ?`,
+          )
+          .run('—', 'SKIP', liveId);
+        service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+        expect(rowState(liveId).sent).toBe('—');
+        service.updateApplication(userId, liveId, { appStatus: '' });
+        expect(rowState(liveId).sent).toBe('—');
+      });
+
+      it('still clears the dash on a normal (non-bot-SKIP/FAIL) row when Clear undoes a Skipped', () => {
+        // ats_status here is a real ATS score, never touched by this API —
+        // the dash in `sent` can only have come from this API's own
+        // NOT_APPLYING derivation, so Clear is free to undo it.
+        service.db
+          .prepare(`UPDATE applications SET ats_status = ? WHERE id = ?`)
+          .run('85%', liveId);
+        service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+        expect(rowState(liveId).sent).toBe('—');
+        service.updateApplication(userId, liveId, { appStatus: '' });
+        expect(rowState(liveId).sent).toBe('');
+      });
+
       it('does not touch a real sent date when Clear undoes a decline status', () => {
         service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
         service.db

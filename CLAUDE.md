@@ -63,7 +63,10 @@ service against it).
   docs/RESUME_PROFILE_STORE.md P2 coordination note).
 
 **Shared Docker volumes with Python bot:**
-- `tracker.db` — read-write (bot writes applications, NestJS edits 3 fields)
+- `tracker.db` — read-write (bot writes applications, NestJS writes
+  Sent/To Learn/Re-application (mirrored to the Sheet), the api-owned
+  app_status/owner_reason/owner_reason_note (never mirrored), and the
+  bot-owned outcome_label/outcome_at pair — set-only, see above)
 - `Applications/` — read-only (bot writes generated CVs, NestJS serves via `/api/generated`)
 - `candidate/` — read-write (bot personal assets; NestJS serves/uploads via `/api/files` + templates)
 - `.env` — read-only (bot config; NestJS serves masked via `/api/settings`, `BOT_ENV_PATH`)
@@ -161,10 +164,13 @@ PATCH  /api/applications/:id    { sent?, toLearn?, reapplication?, appStatus?,
                                   sent is absent from the body — see 2026-09-14 work log
                                   entries and src/tracker/app-status.ts for the mapping.
                                   appStatus:'' (Clear) on a row that WAS Skipped/Filter
-                                  miss also undoes the bot-style dash `sent` marker this
-                                  api wrote, but only that marker — never a real date or
-                                  a bot-written dash on a row that was never a decline
-                                  status, and never outcome_label/outcome_at (clearing an
+                                  miss also undoes a dash `sent` marker, but ONLY when
+                                  `ats_status` shows the bot didn't stamp that dash itself
+                                  (BOT_DASH_ATS_STATUSES = SKIP/FAIL in app-status.ts — the
+                                  bot writes its own '—' at INSERT time, before appStatus is
+                                  ever touched, so `previousStatus` alone can't tell a
+                                  bot-stamped dash apart from one this api derived); never a
+                                  real date, and never outcome_label/outcome_at (clearing an
                                   outcome stays Telegram `/outcome <id> clear`).
                                   ownerReason/ownerReasonNote are the Skipped/Filter-miss
                                   decline-reason fields — non-empty ownerReason must be a

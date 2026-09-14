@@ -30,8 +30,13 @@ reviews:
         owner_reason / owner_reason_note fields, plus the bot-owned
         outcome_label / outcome_at pair
         (set-only — never clear an outcome, see TrackerService.updateApplication);
-        flag any other tracker.db write, and any DDL against it. The app's
-        own schema lives in app.sqlite only.
+        flag any other tracker.db write. DDL against tracker.db is bot-owned
+        territory too, EXCEPT the idempotent `ALTER TABLE ... ADD COLUMN`
+        migrations in tracker-migrations.ts that add one of the API-owned
+        columns above (user_id/app_status/owner_reason/owner_reason_note
+        already ship this way, guarded and deployed to prod) — flag any
+        other DDL (DROP/RENAME/table rebuilds) against it. The app's own
+        schema lives in app.sqlite only.
         (2) Everything is multi-user: queries against tracker.db and any
         filesystem access under users/{userId}/ must be scoped to the
         authenticated user — flag missing user filters and any path built

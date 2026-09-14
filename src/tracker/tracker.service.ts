@@ -9,6 +9,7 @@ import { runTrackerMigrations } from '../db/tracker-migrations';
 import {
   APPLIED_STATUSES,
   AppStatus,
+  BOT_DASH_ATS_STATUSES,
   DASH_MARKERS,
   isOwnerReasonAllowedForStatus,
   NOT_APPLYING_SENT_MARKER,
@@ -254,13 +255,17 @@ export class TrackerService {
    *    part of SHEETS_MIRRORED_COLUMNS, so they never dirty the Sheet row.
    *
    * `appStatus: ''` (Clear) on a row that WAS Skipped/Filter miss and whose
-   * `sent` is still the bot's own dash marker also undoes that marker (see
+   * `sent` is still a dash marker also undoes that marker (see
    * `deriveFromAppStatus`'s `''` branch) — a mis-clicked decline can be
-   * fully undone in one click. It never touches a genuine date/EXPIRED/free
-   * text in `sent`, and it never touches `outcome_label`/`outcome_at`
-   * (clearing those stays Telegram `/outcome <id> clear` — the bot's own
-   * Sheet-pull would silently undo an api-side clear, same reasoning as the
-   * "never clear an outcome" rule below).
+   * fully undone in one click, but ONLY when `ats_status` shows the dash
+   * wasn't the bot's own SKIP/FAIL stamp (`BOT_DASH_ATS_STATUSES` in
+   * app-status.ts — `previousStatus` alone can't tell the two apart, since
+   * the bot stamps '—' at INSERT time, before this API's appStatus is ever
+   * touched). It never touches a genuine date/EXPIRED/free text in `sent`,
+   * and it never touches `outcome_label`/`outcome_at` (clearing those stays
+   * Telegram `/outcome <id> clear` — the bot's own Sheet-pull would silently
+   * undo an api-side clear, same reasoning as the "never clear an outcome"
+   * rule below).
    *
    * Returns null / throws NotFoundException for an unknown id or another
    * user's row, exactly like the individual field updates used to, and
@@ -276,13 +281,14 @@ export class TrackerService {
     const run = this.db.transaction(() => {
       const current = this.db
         .prepare(
-          `SELECT sent, app_status, owner_reason${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
+          `SELECT sent, app_status, owner_reason, ats_status${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
         )
         .get(id, userId) as
         | {
             sent: string;
             app_status: string;
             owner_reason: string;
+            ats_status: string;
             outcome_label?: string;
           }
         | undefined;
@@ -358,6 +364,7 @@ export class TrackerService {
             current.app_status as AppStatus,
             hasOutcomeColumns,
             current.outcome_label ?? '',
+            current.ats_status,
           );
         }
       }
@@ -385,6 +392,7 @@ export class TrackerService {
     previousStatus: AppStatus,
     hasOutcomeColumns: boolean,
     currentOutcomeLabel: string,
+    currentAtsStatus: string,
   ): void {
     const trimmedSent = currentSent.trim();
 
@@ -408,15 +416,22 @@ export class TrackerService {
     } else if (status === '') {
       // Clear ("Undo" a mis-clicked decline): only when the row was
       // PREVIOUSLY a decline status (Skipped/Filter miss) AND `sent` still
-      // holds the bot's own dash marker this API wrote — never a bot-written
-      // dash on a row whose appStatus was never a decline value (that dash
-      // came from the bot's own SKIP/FAIL handling and must not resurface in
-      // Unsent), and never a real date/EXPIRED/free text. Excludes '' itself
-      // from the dash check (an already-blank sent has nothing to undo).
+      // holds a dash marker AND that dash was not itself stamped by the bot
+      // — never a real date/EXPIRED/free text, and never a bot-written dash.
+      // `previousStatus` alone isn't enough provenance: the bot stamps '—'
+      // at INSERT time on its own SKIP/FAIL rows, before this API's appStatus
+      // is ever touched, so a bot SKIP row the owner later marks "Skipped"
+      // here would otherwise look identical to a dash this API derived
+      // itself. `ats_status` is bot-owned (this API never writes it), so its
+      // current value ('SKIP'/'FAIL', see BOT_DASH_ATS_STATUSES) is a
+      // reliable proxy for "the bot, not this API, put that dash there" —
+      // Clear leaves it alone in that case. Excludes '' itself from the dash
+      // check (an already-blank sent has nothing to undo).
       if (
         (NOT_APPLYING_STATUSES as readonly string[]).includes(previousStatus) &&
         trimmedSent !== '' &&
-        (DASH_MARKERS as readonly string[]).includes(trimmedSent)
+        (DASH_MARKERS as readonly string[]).includes(trimmedSent) &&
+        !(BOT_DASH_ATS_STATUSES as readonly string[]).includes(currentAtsStatus)
       ) {
         this.setColumn(userId, id, 'sent', '');
       }

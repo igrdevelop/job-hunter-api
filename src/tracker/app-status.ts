@@ -53,6 +53,17 @@ export const DASH_MARKERS = ['', '-', '—', '–'] as const;
 // "blank, not applied" (so it never counts toward the sent/funnel numbers).
 export const NOT_APPLYING_SENT_MARKER = '—';
 
+// ats_status values the bot writes together with its own '—' dash stamp,
+// at INSERT time, before this API ever touches the row: hunter/tracker.py
+// add_skipped/add_react_skipped (ats_status='SKIP') and add_failed
+// (ats_status='FAIL'); _convert_own_fail_row flips an existing FAIL row to
+// 'SKIP' in place, re-stamping the same dash. ats_status is bot-owned — this
+// API never writes it — so its CURRENT value is a reliable proxy for "did
+// the bot, not this API, stamp the dash that's sitting in `sent` right now",
+// used by deriveFromAppStatus's Clear branch to avoid undoing a dash it
+// never wrote (see tracker.service.ts).
+export const BOT_DASH_ATS_STATUSES = ['SKIP', 'FAIL'] as const;
+
 // "Today" for a derived sent date must agree with the calendar day the bot
 // (and the owner) actually think it is. Neither this API's container nor the
 // bot's container sets TZ explicitly (both node:22-alpine and python:3.11-
