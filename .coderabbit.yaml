@@ -27,7 +27,8 @@ reviews:
         (separate repo owns the pipeline). Invariants (full text in CLAUDE.md):
         (1) tracker.db schema is OWNED by the bot — this API reads freely but
         may write ONLY the Sent / To Learn / Re-application / app_status /
-        note fields, plus the bot-owned outcome_label / outcome_at pair
+        owner_reason / owner_reason_note fields, plus the bot-owned
+        outcome_label / outcome_at pair
         (set-only — never clear an outcome, see TrackerService.updateApplication);
         flag any other tracker.db write, and any DDL against it. The app's
         own schema lives in app.sqlite only.

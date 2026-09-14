@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -10,10 +10,11 @@ import { runTrackerMigrations } from '../db/tracker-migrations';
 import { UpdateApplicationDto } from './dto/update.dto';
 import { TrackerService } from './tracker.service';
 
-// Base schema: mirrors the bot's applications table plus the two API-owned
-// columns (app_status, note). Deliberately WITHOUT outcome_label/outcome_at
-// — that's the bot-owned column pair (docs/improvement-2026-09/
-// 08-DATA_EVAL_PLAN.md M1) this API must tolerate being absent.
+// Base schema: mirrors the bot's applications table plus the API-owned
+// columns (app_status, owner_reason, owner_reason_note). Deliberately
+// WITHOUT outcome_label/outcome_at — that's the bot-owned column pair
+// (docs/improvement-2026-09/08-DATA_EVAL_PLAN.md M1) this API must tolerate
+// being absent.
 const BASE_SCHEMA = `
   CREATE TABLE applications (
     id TEXT PRIMARY KEY,
@@ -38,7 +39,8 @@ const BASE_SCHEMA = `
     cost_usd REAL,
     ats_verdict REAL,
     app_status TEXT NOT NULL DEFAULT '',
-    note TEXT NOT NULL DEFAULT ''
+    owner_reason TEXT NOT NULL DEFAULT '',
+    owner_reason_note TEXT NOT NULL DEFAULT ''
   );
 `;
 
@@ -68,7 +70,8 @@ const SCHEMA_WITH_OUTCOME = `
     cost_usd REAL,
     ats_verdict REAL,
     app_status TEXT NOT NULL DEFAULT '',
-    note TEXT NOT NULL DEFAULT '',
+    owner_reason TEXT NOT NULL DEFAULT '',
+    owner_reason_note TEXT NOT NULL DEFAULT '',
     outcome_label TEXT NOT NULL DEFAULT '',
     outcome_at TEXT
   );
@@ -130,13 +133,14 @@ describe('TrackerService.updateApplication', () => {
     to_learn: string;
     reapplication: string;
     app_status: string;
-    note: string;
+    owner_reason: string;
+    owner_reason_note: string;
     sheets_row: number | null;
     sheets_dirty: number;
   } {
     return service.db
       .prepare(
-        `SELECT sent, to_learn, reapplication, app_status, note, sheets_row, sheets_dirty
+        `SELECT sent, to_learn, reapplication, app_status, owner_reason, owner_reason_note, sheets_row, sheets_dirty
          FROM applications WHERE id = ?`,
       )
       .get(id) as {
@@ -144,7 +148,8 @@ describe('TrackerService.updateApplication', () => {
       to_learn: string;
       reapplication: string;
       app_status: string;
-      note: string;
+      owner_reason: string;
+      owner_reason_note: string;
       sheets_row: number | null;
       sheets_dirty: number;
     };
@@ -190,27 +195,155 @@ describe('TrackerService.updateApplication', () => {
     });
   });
 
-  it('saves a note and never dirties the sheet row', () => {
-    service.updateApplication(userId, liveId, {
-      note: 'wrong stack, skipping',
+  describe('ownerReason / ownerReasonNote', () => {
+    it('saves an owner reason + note on a Skipped row', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'stack',
+        ownerReasonNote: 'heavy backend, not a fit',
+      });
+      expect(rowState(liveId)).toMatchObject({
+        app_status: 'Skipped',
+        owner_reason: 'stack',
+        owner_reason_note: 'heavy backend, not a fit',
+      });
     });
-    expect(rowState(liveId)).toMatchObject({
-      note: 'wrong stack, skipping',
-      sheets_dirty: 0,
-    });
-  });
 
-  it('round-trips a note through the read path', () => {
-    service.updateApplication(userId, liveId, {
-      note: 'reason: relocation only',
+    it('round-trips ownerReason/ownerReasonNote through the read path', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Filter miss',
+        ownerReason: 'location',
+        ownerReasonNote: '3 days in Kraków',
+      });
+      const app = service.getApplicationById(userId, liveId);
+      expect(app?.ownerReason).toBe('location');
+      expect(app?.ownerReasonNote).toBe('3 days in Kraków');
     });
-    const app = service.getApplicationById(userId, liveId);
-    expect(app?.note).toBe('reason: relocation only');
-  });
 
-  it('does not dirty the sheet row for a note even when sheets_row is set', () => {
-    service.updateApplication(userId, liveId, { note: 'anything' });
-    expect(rowState(liveId).sheets_dirty).toBe(0);
+    it("accepts a reason allowed for the row's CURRENT status when appStatus is absent from the body", () => {
+      service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+      service.updateApplication(userId, liveId, { ownerReason: 'salary' });
+      expect(rowState(liveId).owner_reason).toBe('salary');
+    });
+
+    it('rejects a reason not allowed for Filter miss (Skipped-only code) with 400 and writes nothing', () => {
+      expect(() =>
+        service.updateApplication(userId, liveId, {
+          appStatus: 'Filter miss',
+          ownerReason: 'salary',
+        }),
+      ).toThrow(BadRequestException);
+      expect(rowState(liveId)).toMatchObject({
+        app_status: '',
+        owner_reason: '',
+        sent: '',
+      });
+    });
+
+    it('rejects a non-empty reason when the resulting status is not Skipped/Filter miss', () => {
+      expect(() =>
+        service.updateApplication(userId, liveId, {
+          appStatus: 'Sent',
+          ownerReason: 'stack',
+        }),
+      ).toThrow(BadRequestException);
+      expect(rowState(liveId)).toMatchObject({
+        app_status: '',
+        sent: '',
+        owner_reason: '',
+      });
+    });
+
+    it('rejects a non-empty reason against the current status when the body has no appStatus at all', () => {
+      // current app_status is '' (never Skipped/Filter miss) by default.
+      expect(() =>
+        service.updateApplication(userId, liveId, { ownerReason: 'stack' }),
+      ).toThrow(BadRequestException);
+      expect(rowState(liveId).owner_reason).toBe('');
+    });
+
+    it('allows an empty ownerReason regardless of the resulting status (explicit clear)', () => {
+      expect(() =>
+        service.updateApplication(userId, liveId, {
+          appStatus: 'Sent',
+          ownerReason: '',
+        }),
+      ).not.toThrow();
+    });
+
+    it('clears both reason fields when appStatus moves to a non-decline value', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'duplicate',
+        ownerReasonNote: 'seen before',
+      });
+      service.updateApplication(userId, liveId, { appStatus: 'Sent' });
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: '',
+        owner_reason_note: '',
+      });
+    });
+
+    it('clears both reason fields when appStatus is explicitly reset to blank', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'other',
+        ownerReasonNote: 'misc',
+      });
+      service.updateApplication(userId, liveId, { appStatus: '' });
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: '',
+        owner_reason_note: '',
+      });
+    });
+
+    it('does not touch reason fields when appStatus stays a decline status and the body omits reason', () => {
+      service.updateApplication(userId, liveId, {
+        appStatus: 'Skipped',
+        ownerReason: 'level',
+        ownerReasonNote: 'too senior',
+      });
+      // Re-send the same decline status without mentioning the reason at all.
+      service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: 'level',
+        owner_reason_note: 'too senior',
+      });
+    });
+
+    it('a reason-only PATCH on an already-Skipped row works without re-sending appStatus', () => {
+      service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+      service.updateApplication(userId, liveId, {
+        ownerReason: 'russia',
+        ownerReasonNote: 'RU market',
+      });
+      expect(rowState(liveId)).toMatchObject({
+        app_status: 'Skipped',
+        owner_reason: 'russia',
+        owner_reason_note: 'RU market',
+      });
+    });
+
+    it('never dirties the sheet row for owner_reason/owner_reason_note even when sheets_row is set', () => {
+      // Pre-fill sent with a real date so the appStatus derivation step has
+      // nothing to overwrite — isolates the reason fields' own dirty
+      // behavior from the (separately tested) mirrored `sent` derivation.
+      service.db
+        .prepare(`UPDATE applications SET sent = ? WHERE id = ?`)
+        .run('2026-01-01', liveId);
+      service.updateApplication(userId, liveId, { appStatus: 'Skipped' });
+      expect(rowState(liveId).sheets_dirty).toBe(0);
+
+      service.updateApplication(userId, liveId, {
+        ownerReason: 'expired',
+        ownerReasonNote: 'listing gone',
+      });
+      expect(rowState(liveId)).toMatchObject({
+        owner_reason: 'expired',
+        owner_reason_note: 'listing gone',
+        sheets_dirty: 0,
+      });
+    });
   });
 
   describe('appStatus derivation onto sent', () => {
@@ -321,17 +454,17 @@ describe('TrackerService.updateApplication', () => {
 
   it('throws NotFoundException and writes nothing for an unknown id', () => {
     expect(() =>
-      service.updateApplication(userId, 'doesnotexist', { note: 'x' }),
+      service.updateApplication(userId, 'doesnotexist', { toLearn: 'x' }),
     ).toThrow(NotFoundException);
   });
 
   it("throws NotFoundException and writes nothing for another user's row", () => {
     expect(() =>
-      service.updateApplication(userId, otherUserId, { note: 'x' }),
+      service.updateApplication(userId, otherUserId, { toLearn: 'x' }),
     ).toThrow(NotFoundException);
-    // Untouched: still readable by its real owner, note still blank.
+    // Untouched: still readable by its real owner, to_learn still blank.
     const app = service.getApplicationById('user-2', otherUserId);
-    expect(app?.note).toBe('');
+    expect(app?.toLearn).toBe('');
   });
 });
 
@@ -441,15 +574,15 @@ describe('TrackerService.updateApplication outcome derivation (schema with outco
 });
 
 describe('runTrackerMigrations idempotency', () => {
-  it('running the migration twice does not throw and leaves one note/app_status column', () => {
+  it('running the migration twice does not throw and leaves one of each new column', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tracker-migrate-'));
     const trackerPath = join(dir, 'tracker.db');
     try {
       const db = new Database(trackerPath);
       // user_id/url_norm/ats_status already present (as on any tracker.db
       // that already went through the earlier user_id migration) so this
-      // test isolates the note/app_status idempotency guard, not the
-      // unrelated user_id/index migration branch.
+      // test isolates the app_status/owner_reason/owner_reason_note
+      // idempotency guard, not the unrelated user_id/index migration branch.
       db.exec(`
         CREATE TABLE applications (
           id TEXT PRIMARY KEY,
@@ -468,8 +601,9 @@ describe('runTrackerMigrations idempotency', () => {
           name: string;
         }[]
       ).map((r) => r.name);
-      expect(cols.filter((c) => c === 'note')).toHaveLength(1);
       expect(cols.filter((c) => c === 'app_status')).toHaveLength(1);
+      expect(cols.filter((c) => c === 'owner_reason')).toHaveLength(1);
+      expect(cols.filter((c) => c === 'owner_reason_note')).toHaveLength(1);
       db.close();
     } finally {
       // Windows can briefly hold the file handle right after close(); retry
@@ -499,11 +633,41 @@ describe('UpdateApplicationDto validation', () => {
     expect(errors.some((e) => e.property === 'appStatus')).toBe(true);
   });
 
-  it('rejects a note longer than 2000 characters', async () => {
+  it('accepts a known ownerReason value', async () => {
     const dto = plainToInstance(UpdateApplicationDto, {
-      note: 'x'.repeat(2001),
+      ownerReason: 'stack',
     });
     const errors = await validate(dto);
-    expect(errors.some((e) => e.property === 'note')).toBe(true);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('accepts an empty ownerReason (clear)', async () => {
+    const dto = plainToInstance(UpdateApplicationDto, { ownerReason: '' });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects an unknown ownerReason value', async () => {
+    const dto = plainToInstance(UpdateApplicationDto, {
+      ownerReason: 'bogus_code',
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'ownerReason')).toBe(true);
+  });
+
+  it('rejects an ownerReasonNote longer than 500 characters', async () => {
+    const dto = plainToInstance(UpdateApplicationDto, {
+      ownerReasonNote: 'x'.repeat(501),
+    });
+    const errors = await validate(dto);
+    expect(errors.some((e) => e.property === 'ownerReasonNote')).toBe(true);
+  });
+
+  it('accepts an ownerReasonNote at exactly 500 characters', async () => {
+    const dto = plainToInstance(UpdateApplicationDto, {
+      ownerReasonNote: 'x'.repeat(500),
+    });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
   });
 });

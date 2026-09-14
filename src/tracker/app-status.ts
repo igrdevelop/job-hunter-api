@@ -79,3 +79,69 @@ export function todayIsoDate(timeZone: string = BOT_TIMEZONE): string {
 export function nowIsoSeconds(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
+
+// The two "not applying" statuses that may carry an owner_reason. Reused by
+// OWNER_REASONS below and by TrackerService's PATCH validation.
+type DeclineStatus = 'Skipped' | 'Filter miss';
+const DECLINE_STATUSES: readonly DeclineStatus[] = ['Skipped', 'Filter miss'];
+const SKIPPED_ONLY: readonly DeclineStatus[] = ['Skipped'];
+
+// Reason codes for why an application was Skipped (owner chose not to apply,
+// filters were right to let it through) or Filter miss (the bot should have
+// dropped it) — source of truth for docs plan "Applications table v2: status
+// menu, decline reasons, filter-miss feedback" (approved 2026-09-14). Mirror
+// this list (with labels) in job-hunter-site's models.ts, keeping `code` and
+// `allowedFor` identical. `owner_reason`/`owner_reason_note` are API-owned,
+// never mirrored to the Sheet, and distinct from the bot's own gate-only
+// `skip_reason` column.
+export const OWNER_REASON_CODES = [
+  'stack',
+  'fullstack_backend',
+  'level',
+  'title',
+  'location',
+  'language',
+  'work_authorization',
+  'contract',
+  'relocation',
+  'company',
+  'russia',
+  'duplicate',
+  'expired',
+  'salary',
+  'not_interesting',
+  'other',
+] as const;
+export type OwnerReasonCode = (typeof OWNER_REASON_CODES)[number];
+
+export interface OwnerReasonMeta {
+  code: OwnerReasonCode;
+  allowedFor: readonly DeclineStatus[];
+}
+
+// Every code applies to both decline statuses except `salary`/`not_interesting`,
+// which only make sense for a Skipped row (the owner's own call, not
+// something a filter could ever detect) — see the plan's reason-code table.
+export const OWNER_REASONS: readonly OwnerReasonMeta[] = OWNER_REASON_CODES.map(
+  (code) => ({
+    code,
+    allowedFor:
+      code === 'salary' || code === 'not_interesting'
+        ? SKIPPED_ONLY
+        : DECLINE_STATUSES,
+  }),
+);
+
+/** True when `status` is one of the two decline statuses that may carry a reason. */
+export function isDeclineStatus(status: string): status is DeclineStatus {
+  return (DECLINE_STATUSES as readonly string[]).includes(status);
+}
+
+/** True when `code` is a known, non-empty reason code allowed for `status`. */
+export function isOwnerReasonAllowedForStatus(
+  code: string,
+  status: string,
+): boolean {
+  const entry = OWNER_REASONS.find((r) => r.code === code);
+  return !!entry && (entry.allowedFor as readonly string[]).includes(status);
+}

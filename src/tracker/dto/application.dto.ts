@@ -14,5 +14,6 @@ export interface Application {
   reapplication: string;
   driveUrl: string;
   appStatus: string;
-  note: string;
+  ownerReason: string;
+  ownerReasonNote: string;
 }

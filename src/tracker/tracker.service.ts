@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Database from 'better-sqlite3';
 import { runTrackerMigrations } from '../db/tracker-migrations';
@@ -6,6 +10,7 @@ import {
   APPLIED_STATUSES,
   AppStatus,
   DASH_MARKERS,
+  isOwnerReasonAllowedForStatus,
   NOT_APPLYING_SENT_MARKER,
   NOT_APPLYING_STATUSES,
   nowIsoSeconds,
@@ -49,7 +54,8 @@ const APPLICATION_COLUMNS = `
   id, date, company, title, stack,
   ats_status as atsStatus, url, folder, sent,
   to_learn as toLearn, cost_usd as costUsd, ats_verdict as atsVerdict,
-  reapplication, drive_url as driveUrl, app_status as appStatus, note
+  reapplication, drive_url as driveUrl, app_status as appStatus,
+  owner_reason as ownerReason, owner_reason_note as ownerReasonNote
 `;
 
 // Source of truth: COLUMNS in the bot's hunter/gsheets_client.py (A–K).
@@ -58,10 +64,12 @@ const APPLICATION_COLUMNS = `
 // never sees the row, so the sheet stays stale.
 const SHEETS_MIRRORED_COLUMNS = ['sent', 'to_learn', 'reapplication'] as const;
 type SheetsMirroredColumn = (typeof SHEETS_MIRRORED_COLUMNS)[number];
-// app_status/note are API-owned (never mirrored); outcome_label/outcome_at
-// are bot-owned but written here (see updateApplication) through the same
-// dirty-if-still-on-the-sheet rule as a mirrored column.
-type UpdatableColumn = SheetsMirroredColumn | 'app_status' | 'note';
+// app_status/owner_reason/owner_reason_note are API-owned (never mirrored);
+// outcome_label/outcome_at are bot-owned but written here (see
+// updateApplication) through the same dirty-if-still-on-the-sheet rule as a
+// mirrored column.
+type UpdatableColumn =
+  SheetsMirroredColumn | 'app_status' | 'owner_reason' | 'owner_reason_note';
 
 @Injectable()
 export class TrackerService {
@@ -211,6 +219,26 @@ export class TrackerService {
    *  - Derivation is skipped entirely when the same PATCH body also sends an
    *    explicit `sent` — that edit always wins, and lets a client restore
    *    both fields exactly (e.g. an undo/revert flow).
+   *
+   * `ownerReason`/`ownerReasonNote` (the decline-reason category + optional
+   * comment behind the Skipped/Filter-miss dialog, docs plan "Applications
+   * table v2") follow their own, independent rules:
+   *  - A non-empty `ownerReason` must be a known code (enforced by the DTO's
+   *    `@IsIn`) AND allowed for the *resulting* status — this body's
+   *    `appStatus` if present, else the row's current `app_status` — per
+   *    OWNER_REASONS' per-status allowlist (e.g. `salary` is Skipped-only).
+   *    Violating either → BadRequestException, nothing written at all.
+   *  - Whenever the resulting `appStatus` is NOT Skipped/Filter miss
+   *    (including the body explicitly clearing it to `''`), both
+   *    owner_reason and owner_reason_note are reset to `''` — a corrected
+   *    mistake must not leave a stale reason in the analysis data. This
+   *    firing is unconditional (it does not matter whether the body also
+   *    touched the reason fields), and can only happen after the validation
+   *    above already passed, since a non-empty reason on a non-decline
+   *    resulting status is rejected before any write occurs.
+   *  - owner_reason/owner_reason_note are API-owned, like app_status: never
+   *    part of SHEETS_MIRRORED_COLUMNS, so they never dirty the Sheet row.
+   *
    * Returns null / throws NotFoundException for an unknown id or another
    * user's row, exactly like the individual field updates used to, and
    * writes nothing in that case.
@@ -225,12 +253,28 @@ export class TrackerService {
     const run = this.db.transaction(() => {
       const current = this.db
         .prepare(
-          `SELECT sent${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
+          `SELECT sent, app_status${hasOutcomeColumns ? ', outcome_label' : ''} FROM applications WHERE id = ? AND user_id = ?`,
         )
         .get(id, userId) as
-        { sent: string; outcome_label?: string } | undefined;
+        | { sent: string; app_status: string; outcome_label?: string }
+        | undefined;
       if (!current) {
         throw new NotFoundException(`Application ${id} not found`);
+      }
+
+      // Resulting status this PATCH leaves the row in: the body's own
+      // appStatus if it sends one, else whatever is already stored.
+      const resultingStatus = (
+        dto.appStatus !== undefined ? dto.appStatus : current.app_status
+      ) as AppStatus;
+
+      if (
+        dto.ownerReason &&
+        !isOwnerReasonAllowedForStatus(dto.ownerReason, resultingStatus)
+      ) {
+        throw new BadRequestException(
+          `ownerReason "${dto.ownerReason}" is not allowed for status "${resultingStatus || '(none)'}"`,
+        );
       }
 
       if (dto.sent !== undefined) {
@@ -242,11 +286,25 @@ export class TrackerService {
       if (dto.reapplication !== undefined) {
         this.setColumn(userId, id, 'reapplication', dto.reapplication);
       }
-      if (dto.note !== undefined) {
-        this.setColumn(userId, id, 'note', dto.note);
+      if (dto.ownerReason !== undefined) {
+        this.setColumn(userId, id, 'owner_reason', dto.ownerReason);
+      }
+      if (dto.ownerReasonNote !== undefined) {
+        this.setColumn(userId, id, 'owner_reason_note', dto.ownerReasonNote);
       }
       if (dto.appStatus !== undefined) {
         this.setColumn(userId, id, 'app_status', dto.appStatus);
+
+        if (
+          !(NOT_APPLYING_STATUSES as readonly string[]).includes(dto.appStatus)
+        ) {
+          // Already validated above: a non-empty ownerReason can only reach
+          // here if resultingStatus (== dto.appStatus, this branch) is a
+          // decline status, so this branch only runs when dto.ownerReason is
+          // absent or '' — safe to unconditionally reset both fields.
+          this.setColumn(userId, id, 'owner_reason', '');
+          this.setColumn(userId, id, 'owner_reason_note', '');
+        }
 
         if (dto.sent === undefined) {
           this.deriveFromAppStatus(
@@ -311,9 +369,9 @@ export class TrackerService {
     const mirrored = (SHEETS_MIRRORED_COLUMNS as readonly string[]).includes(
       column,
     );
-    // app_status/note are API-owned and not in the A–K mirror; dirtying them
-    // would make resync_dirty() overwrite the whole sheet row for columns
-    // that aren't there.
+    // app_status/owner_reason/owner_reason_note are API-owned and not in the
+    // A–K mirror; dirtying them would make resync_dirty() overwrite the
+    // whole sheet row for columns that aren't there.
     // sheets_row IS NULL means the row was never pushed, or the owner
     // deleted it from the sheet (mark_orphans_expired). Dirtying that
     // would append a resurrected row via resync_dirty() → append_rows.
