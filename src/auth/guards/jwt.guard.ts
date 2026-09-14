@@ -1,6 +1,7 @@
-import { ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { ExecutionContext, Injectable } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Reflector } from '@nestjs/core';
+import { assertEmailVerified } from '../authenticated-user';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 @Injectable()
@@ -27,10 +28,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     context: ExecutionContext,
   ): T {
     const result = super.handleRequest(err, user, info, context) as T;
-    // Admins bypass the email-verified gate (e.g. seeded owner).
-    if (result?.role !== 'admin' && !result?.email_verified) {
-      throw new ForbiddenException('Email not verified');
-    }
+    // Shared with DownloadAuthGuard; admins bypass (e.g. seeded owner).
+    assertEmailVerified(result);
     return result;
   }
 }
