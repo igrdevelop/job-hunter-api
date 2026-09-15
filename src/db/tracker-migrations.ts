@@ -42,6 +42,23 @@ export function runTrackerMigrations(
     );
   }
 
+  // Decline reason (category code + optional comment) for a Skipped/Filter
+  // miss app_status, set from the web UI's decline dialog. API-owned like
+  // app_status: never mirrored to Sheets, bot never reads or writes it, and
+  // deliberately named apart from the bot's own gate-only skip_reason so the
+  // two are never confused. Replaces the earlier `note` column (never
+  // deployed, dropped without a migration).
+  if (cols.length > 0 && !cols.includes('owner_reason')) {
+    trackerDb.exec(
+      `ALTER TABLE applications ADD COLUMN owner_reason TEXT NOT NULL DEFAULT ''`,
+    );
+  }
+  if (cols.length > 0 && !cols.includes('owner_reason_note')) {
+    trackerDb.exec(
+      `ALTER TABLE applications ADD COLUMN owner_reason_note TEXT NOT NULL DEFAULT ''`,
+    );
+  }
+
   // These tables are always created idempotently regardless of user_id column.
   trackerDb.exec(`
     CREATE TABLE IF NOT EXISTS user_settings (
