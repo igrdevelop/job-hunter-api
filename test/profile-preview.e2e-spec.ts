@@ -313,9 +313,10 @@ describe('ProfileModule preview flow (e2e)', () => {
   it('GET .../:file works with a ?dt= download token and no Authorization header', async () => {
     // window.open cannot carry a bearer header — the site opens preview files
     // with the download-token flow (DownloadAuthGuard), same as FilesController.
-    const tok = await authed('get', '/api/auth/download-token', tokenA).expect(
-      200,
-    );
+    // /auth/* is excluded from the global 'api' prefix (main.ts), so the
+    // download-token route lives at /auth/download-token, not /api/auth/...
+    const tok = await authed('get', '/auth/download-token', tokenA).expect(200);
+    expect(tok.body.token).toEqual(expect.any(String));
     const res = await request(app.getHttpServer())
       .get(
         `/api/profile/previews/react/2026-06-01T00-00-00Z/resume.pdf?dt=${encodeURIComponent(
@@ -328,16 +329,27 @@ describe('ProfileModule preview flow (e2e)', () => {
   });
 
   it("a ?dt= token still scopes to its own user — user B's dt cannot fetch A's file", async () => {
-    const tok = await authed('get', '/api/auth/download-token', tokenB).expect(
-      200,
-    );
+    const tok = await authed('get', '/auth/download-token', tokenB).expect(200);
+    const dt = encodeURIComponent(tok.body.token as string);
     await request(app.getHttpServer())
       .get(
-        `/api/profile/previews/react/2026-06-01T00-00-00Z/resume.pdf?dt=${encodeURIComponent(
-          tok.body.token as string,
-        )}`,
+        `/api/profile/previews/react/2026-06-01T00-00-00Z/resume.pdf?dt=${dt}`,
       )
       .expect(404);
+
+    // Positive control: the same dt token does authenticate B for B's own
+    // file, so the 404 above is user scoping, not a rejected token.
+    const userIdB = (await authed('get', '/auth/me', tokenB).expect(200)).body
+      .id as string;
+    plantPreview(userIdB, 'core', '2026-07-01T00-00-00Z', {
+      'resume.pdf': 'pdf-bytes-b',
+    });
+    const own = await request(app.getHttpServer())
+      .get(
+        `/api/profile/previews/core/2026-07-01T00-00-00Z/resume.pdf?dt=${dt}`,
+      )
+      .expect(200);
+    expect(Buffer.from(own.body).toString('utf8')).toBe('pdf-bytes-b');
   });
 
   it('a garbage ?dt= token is rejected with 401', async () => {
