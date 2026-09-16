@@ -1,0 +1,126 @@
+import { validateHeaderValue } from 'http';
+import { contentDisposition } from './content-disposition';
+
+/** Splits a built header back into its type and two filename params. */
+function parse(header: string) {
+  const match =
+    /^(inline|attachment); filename="([^"]*)"; filename\*=UTF-8''(.*)$/.exec(
+      header,
+    );
+  if (!match) throw new Error(`Unexpected header shape: ${header}`);
+  return {
+    type: match[1],
+    fallback: match[2],
+    encoded: match[3],
+    decoded: decodeURIComponent(match[3]),
+  };
+}
+
+function expectValidNodeHeader(header: string) {
+  expect(() =>
+    validateHeaderValue('Content-Disposition', header),
+  ).not.toThrow();
+}
+
+describe('contentDisposition', () => {
+  it('keeps a plain ASCII name as-is in both params', () => {
+    const header = contentDisposition('attachment', 'CV_Acme-2026.pdf');
+    expect(header).toBe(
+      `attachment; filename="CV_Acme-2026.pdf"; filename*=UTF-8''CV_Acme-2026.pdf`,
+    );
+    expectValidNodeHeader(header);
+  });
+
+  it('honors the inline type', () => {
+    expect(parse(contentDisposition('inline', 'a.pdf')).type).toBe('inline');
+  });
+
+  it('encodes a Polish name as UTF-8 and degrades the fallback to ASCII', () => {
+    const name = 'Wrocław_Łódź_Świętokrzyska_żółć.pdf';
+    const header = contentDisposition('inline', name);
+    expectValidNodeHeader(header);
+    const parsed = parse(header);
+    // Decomposable letters lose their diacritics; ł/Ł have no decomposition.
+    expect(parsed.fallback).toBe('Wroc_aw__odz_Swietokrzyska_zo_c.pdf');
+    expect(parsed.encoded).toBe(
+      'Wroc%C5%82aw_%C5%81%C3%B3d%C5%BA_%C5%9Awi%C4%99tokrzyska_%C5%BC%C3%B3%C5%82%C4%87.pdf',
+    );
+    expect(parsed.decoded).toBe(name);
+  });
+
+  it('encodes a Cyrillic name as UTF-8 with an underscore fallback', () => {
+    const name = 'Резюме Иван.docx';
+    const header = contentDisposition('attachment', name);
+    expectValidNodeHeader(header);
+    const parsed = parse(header);
+    expect(parsed.fallback).toBe('______ ____.docx');
+    expect(parsed.decoded).toBe(name);
+  });
+
+  it('never emits latin1 bytes for U+0080–U+00FF names', () => {
+    const name = 'Müller_café.pdf';
+    const header = contentDisposition('attachment', name);
+    expect(header).toMatch(/^[\x20-\x7e]*$/);
+    expect(parse(header).fallback).toBe('Muller_cafe.pdf');
+    expect(parse(header).decoded).toBe(name);
+  });
+
+  it('replaces an astral character with a single fallback underscore', () => {
+    const header = contentDisposition('attachment', 'cv 🚀.pdf');
+    expectValidNodeHeader(header);
+    expect(parse(header).fallback).toBe('cv _.pdf');
+    expect(parse(header).decoded).toBe('cv 🚀.pdf');
+  });
+
+  it('strips quotes and backslashes from the fallback but keeps them encoded', () => {
+    const name = 'my "best" \\ cv.pdf';
+    const header = contentDisposition('attachment', name);
+    expectValidNodeHeader(header);
+    const parsed = parse(header);
+    expect(parsed.fallback).toBe('my best  cv.pdf');
+    expect(parsed.encoded).toBe('my%20%22best%22%20%5C%20cv.pdf');
+  });
+
+  it('drops CR/LF and other control characters (no header injection)', () => {
+    const name = 'evil\r\nSet-Cookie: x=1\t\u0000\u007f\u0085.pdf';
+    const header = contentDisposition('attachment', name);
+    expectValidNodeHeader(header);
+    expect(header).not.toMatch(/[\r\n]/);
+    const parsed = parse(header);
+    expect(parsed.fallback).toBe('evilSet-Cookie: x=1.pdf');
+    expect(parsed.decoded).toBe('evilSet-Cookie: x=1.pdf');
+  });
+
+  it("percent-encodes RFC 5987 non-attr-chars that encodeURIComponent keeps: ' ( ) *", () => {
+    const header = contentDisposition('attachment', "O'Brien (final)*.pdf");
+    const parsed = parse(header);
+    expect(parsed.encoded).toBe('O%27Brien%20%28final%29%2A.pdf');
+    expect(parsed.fallback).toBe("O'Brien (final)*.pdf");
+    expect(parsed.decoded).toBe("O'Brien (final)*.pdf");
+  });
+
+  it('does not throw on a lone surrogate', () => {
+    const header = contentDisposition('attachment', 'bad\uD800name.pdf');
+    expectValidNodeHeader(header);
+    expect(parse(header).decoded).toBe('bad�name.pdf');
+    expect(parse(header).fallback).toBe('bad_name.pdf');
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace only', '   '],
+    ['control chars only', '\r\n\t'],
+  ])('falls back to "download" for an %s name', (_label, name) => {
+    const header = contentDisposition('attachment', name);
+    expect(header).toBe(
+      `attachment; filename="download"; filename*=UTF-8''download`,
+    );
+  });
+
+  it('falls back to "download" when nothing printable survives in the fallback', () => {
+    const header = contentDisposition('inline', '""');
+    expectValidNodeHeader(header);
+    expect(parse(header).fallback).toBe('download');
+    expect(parse(header).decoded).toBe('""');
+  });
+});
