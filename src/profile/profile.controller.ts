@@ -22,6 +22,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
+import { contentDisposition } from '../common/content-disposition';
 import {
   ALLOWED_UPLOAD_EXTENSIONS,
   extensionOf,
@@ -118,10 +119,12 @@ export class ProfileController {
       ts,
       file,
     );
-    const safeName = file.replace(/"/g, '');
     res.set({
       'Content-Type': contentType,
-      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
+      'Content-Disposition': contentDisposition(
+        inline ? 'inline' : 'attachment',
+        file,
+      ),
     });
     return new StreamableFile(createReadStream(path));
   }
@@ -143,10 +146,9 @@ export class ProfileController {
     @Res({ passthrough: true }) res: Response,
   ): StreamableFile {
     const { path, contentType } = this.profile.getCandidateFile(user.id, name);
-    const safeName = name.replace(/"/g, '');
     res.set({
       'Content-Type': contentType,
-      'Content-Disposition': `inline; filename="${safeName}"`,
+      'Content-Disposition': contentDisposition('inline', name),
     });
     return new StreamableFile(createReadStream(path));
   }

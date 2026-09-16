@@ -18,6 +18,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
+import { contentDisposition } from '../common/content-disposition';
 import { FilesService } from './files.service';
 
 @Controller('files')
@@ -44,10 +45,12 @@ export class FilesController {
 
     const { path: abs, contentType, inline, fileName } =
       this.files.resolveFile(user.id, relativePath);
-    const safeName = fileName.replace(/"/g, '');
     res.set({
       'Content-Type': contentType,
-      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
+      'Content-Disposition': contentDisposition(
+        inline ? 'inline' : 'attachment',
+        fileName,
+      ),
     });
     return new StreamableFile(createReadStream(abs));
   }
