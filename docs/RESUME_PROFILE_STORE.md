@@ -141,11 +141,11 @@ Upload:  site POST /api/profile/uploads → file saved to
 
 ### Erasure & ownership
 
-Right-to-erasure is one operation: delete `profiles` + `profile_revisions`
-rows, the user's `profile_jobs` rows, and `users/{uid}/uploads/` — wire it
-into the existing admin `DELETE /api/admin/users/:id` path (which already
-owns per-user file cleanup semantics). Rendered `candidate/` files die with
-the user directory as today.
+Right-to-erasure is one operation: delete `profiles` + `profile_revisions` +
+`profile_uploads` rows (app.sqlite), the user's `profile_jobs` rows
+(tracker.db), and `users/{uid}/uploads/` — wire it into the existing admin
+`DELETE /api/admin/users/:id` path (which already owns per-user file cleanup
+semantics). Rendered `candidate/` files die with the user directory as today.
 
 ## Phases (one PR each)
 
@@ -184,10 +184,11 @@ the user directory as today.
 
 - `POST /api/profile/uploads`: multipart (reuse FilesModule's upload
   plumbing/limits), extension whitelist `docx|pdf|txt|md`, ≤ 10 MB, stored as
-  `users/{uid}/uploads/{uuid}.{ext}` (original filename kept in the job row's
-  `result` metadata only — never trusted for the path), sha256 recorded,
-  `parse` job inserted. Throttled 10/hour/user (`@nestjs/throttler` like
-  /auth).
+  `users/{uid}/uploads/{uuid}.{ext}` (original filename + sha256 recorded in
+  app.sqlite's `profile_uploads` table, migration 004 — never trusted for the
+  path; the job row's `result` stays empty, it belongs to the bot's parse
+  output), `parse` job inserted. Throttled 10/hour/user (`@nestjs/throttler`
+  like /auth).
 - e2e: bad extension 400; oversize 413/400; path traversal in filename is
   inert; job row's payload is relative and inside the user's directory.
 
