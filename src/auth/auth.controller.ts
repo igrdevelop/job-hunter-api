@@ -16,6 +16,8 @@ import { ClientIpThrottlerGuard } from './client-ip-throttler.guard';
 import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 
 interface AuthenticatedRequest extends Request {
   user: { id: string; email: string; role: string };
@@ -45,15 +47,15 @@ export class AuthController {
 
   @Public()
   @Post('verify')
-  async verify(@Body('token') token: string) {
-    await this.authService.verifyEmail(token);
+  async verify(@Body() dto: VerifyEmailDto) {
+    await this.authService.verifyEmail(dto.token);
     return { ok: true };
   }
 
   @Public()
   @Post('resend')
-  async resend(@Body('email') email: string) {
-    await this.authService.resendVerification(email);
+  async resend(@Body() dto: ResendVerificationDto) {
+    await this.authService.resendVerification(dto.email);
     return { ok: true };
   }
 

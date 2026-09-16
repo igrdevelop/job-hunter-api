@@ -21,6 +21,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { DownloadAuthGuard } from '../auth/guards/download-auth.guard';
+import { contentDisposition } from '../common/content-disposition';
 import { TemplatesService } from './templates.service';
 import type { TemplateCategory } from './templates.service';
 
@@ -48,7 +49,10 @@ export class TemplatesController {
     );
     res.set({
       'Content-Type': contentTypeFor(template.fileName),
-      'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${template.name.replace(/"/g, '')}${extname(template.fileName)}"`,
+      'Content-Disposition': contentDisposition(
+        inline ? 'inline' : 'attachment',
+        `${template.name}${extname(template.fileName)}`,
+      ),
     });
     return new StreamableFile(createReadStream(path));
   }

@@ -1,0 +1,62 @@
+export type DispositionType = 'inline' | 'attachment';
+
+/** Used when a name has nothing left after control characters are removed. */
+const DEFAULT_FILE_NAME = 'download';
+
+// C0 controls + DEL + C1 controls. Never meaningful in a file name, and CR/LF
+// would be header injection in the plain `filename=` parameter.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+// Unpaired UTF-16 surrogates — encodeURIComponent throws URIError on these.
+const LONE_SURROGATES =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+// Combining marks left over after NFKD, so "ś" degrades to "s" not "_".
+const COMBINING_MARKS = /[\u0300-\u036f]/g;
+
+/**
+ * Builds an RFC 6266 Content-Disposition header value that is always a legal
+ * Node header (no chars above U+00FF, no CR/LF), for any file name:
+ *
+ *   <type>; filename="<ASCII fallback>"; filename*=UTF-8''<RFC 5987 encoded>
+ *
+ * Hand-building `filename="${name}"` breaks on real data: Polish company
+ * folders written by the bot ("Wrocław") make Node throw ERR_INVALID_CHAR
+ * (a 500), and U+0080–U+00FF names go out as latin1 mojibake. Clients that
+ * understand `filename*` (all current browsers) use the exact UTF-8 name;
+ * the rest get the ASCII fallback.
+ */
+export function contentDisposition(
+  type: DispositionType,
+  fileName: string,
+): string {
+  let name = (fileName ?? '')
+    .replace(LONE_SURROGATES, '�')
+    .replace(CONTROL_CHARS, '');
+  if (!name.trim()) name = DEFAULT_FILE_NAME;
+
+  return `${type}; filename="${asciiFallback(name)}"; filename*=UTF-8''${encodeRfc5987(name)}`;
+}
+
+/** Printable ASCII only; `"` and `\` removed (quoted-string specials). */
+function asciiFallback(name: string): string {
+  let out = '';
+  for (const ch of name.normalize('NFKD').replace(COMBINING_MARKS, '')) {
+    const code = ch.codePointAt(0)!;
+    if (ch === '"' || ch === '\\') continue;
+    out += code >= 0x20 && code <= 0x7e ? ch : '_';
+  }
+  return out.trim() ? out : DEFAULT_FILE_NAME;
+}
+
+/**
+ * RFC 5987 ext-value encoding. encodeURIComponent leaves `'()*` unescaped,
+ * but those are not attr-chars, so they are percent-encoded on top.
+ */
+function encodeRfc5987(name: string): string {
+  return encodeURIComponent(name).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
