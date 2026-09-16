@@ -12,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Throttle } from '@nestjs/throttler';
 import { UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { DOWNLOAD_AUDIENCE } from './authenticated-user';
 import { ClientIpThrottlerGuard } from './client-ip-throttler.guard';
 import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
@@ -62,7 +63,12 @@ export class AuthController {
   @Get('download-token')
   downloadToken(@Req() req: AuthenticatedRequest) {
     const token = this.jwtService.sign(
-      { sub: req.user.id, email: req.user.email, role: req.user.role, aud: 'download' },
+      {
+        sub: req.user.id,
+        email: req.user.email,
+        role: req.user.role,
+        aud: DOWNLOAD_AUDIENCE,
+      },
       { secret: this.config.get<string>('jwt.secret'), expiresIn: '5m' },
     );
     return { token };

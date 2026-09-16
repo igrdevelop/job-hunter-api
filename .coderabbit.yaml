@@ -44,7 +44,10 @@ reviews:
         templates modules serve paths taken from URLs).
         (3) Endpoints require the JWT guard unless explicitly public
         (auth, health); download-token (aud='download') endpoints accept the
-        short-lived ?dt= token only where already designed to.
+        short-lived ?dt= token only where already designed to, and never
+        as a bearer token. Every token is re-resolved against the users row
+        (src/auth/authenticated-user.ts): flag code that trusts role/email
+        from token claims or skips the disabled/deleted check.
         (4) DTOs are validated with class-validator — flag handlers that read
         raw body/query fields without a validated DTO.
         (5) better-sqlite3 is synchronous — flag heavy queries or file I/O
