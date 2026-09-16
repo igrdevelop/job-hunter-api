@@ -19,7 +19,10 @@ export class ApplicationsController {
   constructor(private readonly tracker: TrackerService) {}
 
   @Get()
-  list(@CurrentUser() user: CurrentUserData, @Query() query: QueryApplicationsDto) {
+  list(
+    @CurrentUser() user: CurrentUserData,
+    @Query() query: QueryApplicationsDto,
+  ) {
     return this.tracker.getApplications(user.id, query);
   }
 
@@ -48,18 +51,6 @@ export class ApplicationsController {
     @Param('id') id: string,
     @Body() dto: UpdateApplicationDto,
   ) {
-    if (dto.sent !== undefined) {
-      this.tracker.updateSent(user.id, id, dto.sent);
-    }
-    if (dto.toLearn !== undefined) {
-      this.tracker.updateToLearn(user.id, id, dto.toLearn);
-    }
-    if (dto.reapplication !== undefined) {
-      this.tracker.updateReapplication(user.id, id, dto.reapplication);
-    }
-    if (dto.appStatus !== undefined) {
-      this.tracker.updateAppStatus(user.id, id, dto.appStatus);
-    }
-    return this.tracker.getApplicationById(user.id, id);
+    return this.tracker.updateApplication(user.id, id, dto);
   }
 }
