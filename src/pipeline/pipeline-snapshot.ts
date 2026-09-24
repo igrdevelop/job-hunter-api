@@ -17,7 +17,7 @@
  * handle, and every statement here is a SELECT / PRAGMA table_info.
  */
 import type Database from 'better-sqlite3';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { classifySent, parseSentDate } from './sent-parse';
 import {
   isoUtcSeconds,
@@ -527,20 +527,38 @@ function openRunFor(
   };
 }
 
-/** Port of `_failure_log_records`. */
-function failureLogRecords(
-  path: string | undefined,
-  win: SnapshotWindow,
-): Row | null {
-  if (!path || !existsSync(path)) return null;
+/** One parsed `apply_failures.jsonl` line: its instant and outcome label. */
+interface FailureRecord {
+  ts: number | null;
+  outcome: string;
+}
+
+/**
+ * Parsed `apply_failures.jsonl`, keyed by (path, mtimeMs, size). The page
+ * polls this endpoint every ~15 s and the bot's RotatingFileHandler lets the
+ * live file reach 5 MB (hunter/apply_failures_log.py: maxBytes=5 MB,
+ * backupCount=5 — only the live file is read, like the tool), so the file
+ * is re-read and re-parsed only when it changed; the window filter still
+ * runs per request over the cached records.
+ */
+let failureLogCache: { key: string; records: FailureRecord[] } | null = null;
+
+function loadFailureLog(path: string): FailureRecord[] | null {
+  let key: string;
+  try {
+    const st = statSync(path);
+    key = `${path}|${st.mtimeMs}|${st.size}`;
+  } catch {
+    return null;
+  }
+  if (failureLogCache?.key === key) return failureLogCache.records;
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
   } catch {
     return null;
   }
-  const byOutcome = new Tally();
-  let total = 0;
+  const records: FailureRecord[] = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
@@ -551,9 +569,29 @@ function failureLogRecords(
       continue;
     }
     if (!isPlainObject(rec)) continue;
-    if (!win.contains(parseTs(rec.ts))) continue;
+    records.push({
+      ts: parseTs(rec.ts),
+      outcome: (rec.outcome as string) || '?',
+    });
+  }
+  failureLogCache = { key, records };
+  return records;
+}
+
+/** Port of `_failure_log_records`. */
+function failureLogRecords(
+  path: string | undefined,
+  win: SnapshotWindow,
+): Row | null {
+  if (!path || !existsSync(path)) return null;
+  const records = loadFailureLog(path);
+  if (records === null) return null;
+  const byOutcome = new Tally();
+  let total = 0;
+  for (const rec of records) {
+    if (!win.contains(rec.ts)) continue;
     total += 1;
-    byOutcome.add((rec.outcome as string) || '?');
+    byOutcome.add(rec.outcome);
   }
   return { in_window: total, by_outcome: byOutcome.mostCommon() };
 }

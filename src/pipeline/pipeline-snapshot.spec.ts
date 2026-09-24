@@ -1,5 +1,11 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import fs, {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -126,6 +132,80 @@ describe('pipeline snapshot — contract fixture', () => {
     });
     expect(u2.events).toEqual([]);
     expect(JSON.stringify(u2)).not.toMatch(/Example Corp|Gamma|Acme/);
+  });
+
+  it('re-reads apply_failures.jsonl only when its mtime or size changes', () => {
+    const logPath = join(
+      mkdtempSync(join(tmpdir(), 'pipeline-log-cache-')),
+      'apply_failures.jsonl',
+    );
+    writeFileSync(
+      logPath,
+      '{"ts": "2026-09-22T10:00:00Z", "outcome": "fail"}\n',
+    );
+    utimesSync(
+      logPath,
+      new Date('2026-09-22T10:00:00Z'),
+      new Date('2026-09-22T10:00:00Z'),
+    );
+    const read = jest.spyOn(fs, 'readFileSync');
+    const logReads = () =>
+      read.mock.calls.filter(([p]) => p === logPath).length;
+    const records = () =>
+      asJson(
+        buildSnapshot(db, {
+          days: 1,
+          userId: 'u1',
+          now: NOW,
+          failuresLogPath: logPath,
+        }),
+      ).apply.failures.log_records;
+    try {
+      expect(records()).toEqual({ in_window: 1, by_outcome: [['fail', 1]] });
+      expect(records()).toEqual({ in_window: 1, by_outcome: [['fail', 1]] });
+      expect(logReads()).toBe(1); // unchanged file: parsed once
+
+      // Same size, new mtime → re-parsed.
+      utimesSync(
+        logPath,
+        new Date('2026-09-22T11:00:00Z'),
+        new Date('2026-09-22T11:00:00Z'),
+      );
+      records();
+      expect(logReads()).toBe(2);
+
+      // Appended line (size changes) → re-parsed, and the window filter still
+      // runs per request over the cached records.
+      appendFileSync(
+        logPath,
+        '{"ts": "2026-09-22T11:30:00Z", "outcome": "cli_timeout"}\n',
+      );
+      utimesSync(
+        logPath,
+        new Date('2026-09-22T11:00:00Z'),
+        new Date('2026-09-22T11:00:00Z'),
+      );
+      expect(records()).toEqual({
+        in_window: 2,
+        by_outcome: [
+          ['fail', 1],
+          ['cli_timeout', 1],
+        ],
+      });
+      expect(logReads()).toBe(3);
+      const nextDay = asJson(
+        buildSnapshot(db, {
+          days: 1,
+          userId: 'u1',
+          now: new Date('2026-09-23T12:00:00Z'),
+          failuresLogPath: logPath,
+        }),
+      ).apply.failures.log_records;
+      expect(nextDay).toEqual({ in_window: 0, by_outcome: [] });
+      expect(logReads()).toBe(3);
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it('parses events[].details from the FULL payload, not the 80-char cut', () => {

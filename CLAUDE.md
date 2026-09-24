@@ -244,7 +244,11 @@ GET /api/pipeline/snapshot?days=1   → hunt / apply / result tiers + events foo
                                       is GLOBAL by design; applications/generation_runs rows and
                                       the events footer are the caller's own. No owner-only gate.
                                       A missing optional table/column → that block null (never a
-                                      500); no applications table / tracker.db unreadable → 503.
+                                      500); no applications table / tracker.db unreadable, or a
+                                      transient SqliteError mid-snapshot (BUSY/IOERR*/CORRUPT/NOTADB/
+                                      CANTOPEN — the cached read-only handle is dropped and reopened
+                                      on the next request) → 503. apply_failures.jsonl is parsed once
+                                      per (path, mtime, size), not per poll.
                                       Contract fixtures: test/fixtures/pipeline_snapshot/.
 
 # Settings (JWT required)

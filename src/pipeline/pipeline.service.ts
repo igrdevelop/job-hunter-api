@@ -16,6 +16,22 @@ export type PipelineClock = () => Date;
 const SLOW_SNAPSHOT_MS = 200;
 
 /**
+ * SQLite failures that mean "the file/handle is unusable right now", not a
+ * bug: lock contention past busy_timeout, I/O errors, a corrupt or replaced
+ * file, a lost WAL -shm. Mapped to 503, and the cached handle is dropped so
+ * the next request reopens it instead of staying stuck on a dead one.
+ */
+const TRANSIENT_SQLITE_CODE =
+  /^SQLITE_(BUSY|IOERR|CORRUPT|NOTADB|CANTOPEN)(_|$)/;
+
+function sqliteCode(err: unknown): string | null {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && TRANSIENT_SQLITE_CODE.test(code)
+    ? code
+    : null;
+}
+
+/**
  * docs/PIPELINE_VIZ_PLAN.md M2 — read-only pipeline snapshot over the bot's
  * tracker.db (contract: the bot repo's docs/PIPELINE_SNAPSHOT_CONTRACT.md).
  *
@@ -35,13 +51,19 @@ export class PipelineService implements OnModuleDestroy {
     @Inject(PIPELINE_CLOCK) private readonly clock: PipelineClock,
   ) {}
 
+  /** Open the read-only tracker.db handle (a seam for tests). */
+  protected openHandle(path: string): Database.Database {
+    const db = new Database(path, { readonly: true, fileMustExist: true });
+    // A read-only handle can still wait for the bot's writer lock.
+    db.pragma('busy_timeout = 5000');
+    return db;
+  }
+
   private handle(): Database.Database {
     if (!this.db) {
       const path = this.config.get<string>('tracker.dbPath')!;
       try {
-        this.db = new Database(path, { readonly: true, fileMustExist: true });
-        // A read-only handle can still wait for the bot's writer lock.
-        this.db.pragma('busy_timeout = 5000');
+        this.db = this.openHandle(path);
       } catch (err) {
         this.logger.warn(`cannot open tracker.db read-only: ${String(err)}`);
         throw new ServiceUnavailableException('tracker.db is not available');
@@ -64,6 +86,16 @@ export class PipelineService implements OnModuleDestroy {
       if (err instanceof TrackerSchemaError) {
         throw new ServiceUnavailableException(err.message);
       }
+      const code = sqliteCode(err);
+      if (code) {
+        this.logger.warn(
+          `pipeline snapshot failed with ${code}; dropping the tracker.db handle`,
+        );
+        this.dropHandle();
+        throw new ServiceUnavailableException(
+          'tracker.db temporarily unavailable',
+        );
+      }
       throw err;
     }
     const elapsed = performance.now() - started;
@@ -75,8 +107,16 @@ export class PipelineService implements OnModuleDestroy {
     return snapshot;
   }
 
-  onModuleDestroy(): void {
-    this.db?.close();
+  private dropHandle(): void {
+    try {
+      this.db?.close();
+    } catch {
+      // already unusable — nothing more to release
+    }
     this.db = null;
+  }
+
+  onModuleDestroy(): void {
+    this.dropHandle();
   }
 }
