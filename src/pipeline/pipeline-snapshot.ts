@@ -815,8 +815,54 @@ function resultTier(
 
 // ── Events footer ─────────────────────────────────────────────────────────────
 
+/** Payload keys passed through as-is (`EVENT_DETAIL_KEYS`). */
+const EVENT_DETAIL_KEYS = [
+  'round',
+  'kind',
+  'score',
+  'best',
+  'target',
+  'max_rounds',
+  'verdict_first',
+  'chars',
+];
+/** Free-text payload keys, cut to a fixed length (`EVENT_DETAIL_TEXT_KEYS`). */
+const EVENT_DETAIL_TEXT_KEYS: [string, number][] = [
+  ['error', 200],
+  ['reason', 120],
+];
+
 /**
- * Port of `recent_events` (minus `at` and `payload`).
+ * Port of `_event_details`: the stable fields of the FULL
+ * `pipeline_events.payload` column (never the tool's 80-char `payload`
+ * display string — a refine round carrying `reason` is broken JSON after
+ * that cut). null for an empty / unparseable / non-object payload, or one
+ * carrying none of the known keys. `error`/`reason` are kept only when they
+ * are strings, cut by code points like Python's slice.
+ */
+export function eventDetails(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== 'string') return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(data)) return null;
+  const out: Record<string, unknown> = {};
+  for (const k of EVENT_DETAIL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(data, k)) out[k] = data[k];
+  }
+  for (const [k, cap] of EVENT_DETAIL_TEXT_KEYS) {
+    const v = data[k];
+    if (typeof v === 'string') out[k] = Array.from(v).slice(0, cap).join('');
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Port of `recent_events` (minus `at` and the 80-char `payload` display
+ * string — still "Not in the contract"; `details` is its parsed replacement).
  *
  * Deliberate difference: user-scoped. The tool reads the footer with no
  * user predicate and a company subquery that can pick ANY user's row for a
@@ -848,7 +894,7 @@ function recentEvents(
     : "(SELECT '' WHERE ? IS NOT NULL)";
   const rows = db
     .prepare(
-      `SELECT e.ts, e.stage, e.event, e.duration_ms, r.pipeline, ${company} AS company
+      `SELECT e.ts, e.stage, e.event, e.duration_ms, e.payload, r.pipeline, ${company} AS company
        FROM pipeline_events e
        JOIN generation_runs r ON r.run_id = e.run_id
        WHERE (r.user_id = ? OR r.user_id = '')
@@ -862,6 +908,7 @@ function recentEvents(
     duration_ms: r.duration_ms,
     company: (r.company as string) || '',
     pipeline: r.pipeline,
+    details: eventDetails(r.payload),
   }));
 }
 

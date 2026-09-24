@@ -29,7 +29,8 @@ export function buildContractDb(path: string): void {
 /**
  * The contract's expected.json minus its "Not in the contract" section:
  * `next_slot`, `hunt.window`, local-config keys, `coverage`, every `at`
- * display string and `events[].payload`. `run.last_event` /
+ * display string and `events[].payload` (the 80-char display string —
+ * `events[].details` IS in the contract and stays). `run.last_event` /
  * `run.refine_progress` carry the raw `ts` in place of `at` (the port's one
  * addition — without it those two objects would have no time at all).
  */

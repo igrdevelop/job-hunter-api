@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   buildSnapshot,
+  eventDetails,
   inferStage,
   refineConfig,
   TrackerSchemaError,
@@ -125,6 +126,58 @@ describe('pipeline snapshot — contract fixture', () => {
     });
     expect(u2.events).toEqual([]);
     expect(JSON.stringify(u2)).not.toMatch(/Example Corp|Gamma|Acme/);
+  });
+
+  it('parses events[].details from the FULL payload, not the 80-char cut', () => {
+    const path = tmpDbPath('pipeline-details-');
+    buildContractDb(path);
+    const reason = 'r'.repeat(300);
+    const payload = JSON.stringify({
+      round: 3,
+      kind: 'stretch',
+      score: 91,
+      best: 91,
+      reason,
+      prompt_tokens: 1234, // unknown telemetry — dropped
+    });
+    // The tool's display string would be cut here — and is not JSON anymore.
+    expect(() => JSON.parse(payload.slice(0, 80))).toThrow();
+    const w = new Database(path);
+    w.prepare(
+      'INSERT INTO pipeline_events (run_id, ts, stage, event, duration_ms, payload) ' +
+        'VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      'r_ip',
+      '2026-09-22T11:59:30+00:00',
+      'refine',
+      'accepted',
+      1000,
+      payload,
+    );
+    w.prepare(
+      'INSERT INTO pipeline_events (run_id, ts, stage, event, duration_ms, payload) ' +
+        'VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      'r_ip',
+      '2026-09-22T11:59:40+00:00',
+      'judge',
+      'ok',
+      1000,
+      '{"foo": 1}',
+    );
+    w.close();
+    const ro = new Database(path, { readonly: true });
+    const snap = asJson(buildSnapshot(ro, { days: 1, userId: 'u1', now: NOW }));
+    ro.close();
+    expect(snap.events[0]).toMatchObject({ stage: 'judge', details: null });
+    expect(snap.events[1].details).toEqual({
+      round: 3,
+      kind: 'stretch',
+      score: 91,
+      best: 91,
+      reason: 'r'.repeat(120),
+    });
+    expect(snap.events[1].payload).toBeUndefined();
   });
 
   it('reads apply_failures.jsonl when the path is reachable', () => {
@@ -400,6 +453,26 @@ describe('pipeline snapshot — helpers', () => {
       refine_target: null,
       refine_max_rounds: null,
     });
+  });
+
+  it('keeps only the stable event-detail keys', () => {
+    expect(eventDetails('')).toBeNull();
+    expect(eventDetails(null)).toBeNull();
+    expect(eventDetails('not json')).toBeNull();
+    expect(eventDetails('[1, 2]')).toBeNull();
+    expect(eventDetails('"a string"')).toBeNull();
+    expect(eventDetails('{"foo": 1, "bar": "x"}')).toBeNull(); // unknown-only
+    expect(eventDetails('{"chars": 5120}')).toEqual({ chars: 5120 });
+    expect(eventDetails('{"score": null}')).toEqual({ score: null });
+    expect(
+      eventDetails(JSON.stringify({ error: 'e'.repeat(250), extra: 1 })),
+    ).toEqual({ error: 'e'.repeat(200) });
+    // error / reason survive only as strings.
+    expect(eventDetails('{"error": {"code": 1}, "reason": 7}')).toBeNull();
+    // Cut by code points, like Python's str slice.
+    expect(
+      eventDetails(JSON.stringify({ reason: '😀'.repeat(130) }))?.reason,
+    ).toBe('😀'.repeat(120));
   });
 
   it('parses the free-text Sent column like hunter/sent_parse.py', () => {
