@@ -15,9 +15,6 @@ export const EXPECTED = JSON.parse(
 
 /** The contract's frozen instant (Warsaw 14:00 CEST on 2026-09-22). */
 export const NOW = new Date('2026-09-22T12:00:00+00:00');
-/** ts of the in-progress run's newest event (fixture.sql, run r_ip). */
-const R_IP_LAST_TS = '2026-09-22T11:59:00+00:00';
-
 /** Create the contract tracker.db (schema + rows) at `path`. */
 export function buildContractDb(path: string): void {
   const db = new Database(path);
@@ -30,9 +27,8 @@ export function buildContractDb(path: string): void {
  * The contract's expected.json minus its "Not in the contract" section:
  * `next_slot`, `hunt.window`, local-config keys, `coverage`, every `at`
  * display string and `events[].payload` (the 80-char display string —
- * `events[].details` IS in the contract and stays). `run.last_event` /
- * `run.refine_progress` carry the raw `ts` in place of `at` (the port's one
- * addition — without it those two objects would have no time at all).
+ * `events[].details` IS in the contract and stays). The raw `ts` on
+ * `run.last_event` / `run.refine_progress` is in the contract since 5c35447.
  */
 export function toApiShape(expected: Record<string, any>): Record<string, any> {
   const e = structuredClone(expected);
@@ -46,7 +42,6 @@ export function toApiShape(expected: Record<string, any>): Record<string, any> {
     for (const key of ['last_event', 'refine_progress']) {
       if (card.run?.[key]) {
         delete card.run[key].at;
-        card.run[key].ts = R_IP_LAST_TS;
       }
     }
   }

@@ -46,11 +46,11 @@
         "claimed_min_ago": 14, "stale": false,
         "run": {
           "run_id": "r_ip", "pipeline": "cli", "profile": "", "elapsed_min": 14, "events": 7,
-          "last_event": {"stage": "refine", "event": "accepted", "at": "13:59"},
+          "last_event": {"stage": "refine", "event": "accepted", "at": "13:59", "ts": "2026-09-22T11:59:00+00:00"},
           "current_stage": {"stage": "refine", "basis": "refine round accepted"},
           "stage_started_min_ago": 3,
           "refine_progress": {"round": 2, "kind": "honest", "score": 90, "best": 90,
-                              "outcome": "accepted", "at": "13:59"},
+                              "outcome": "accepted", "at": "13:59", "ts": "2026-09-22T11:59:00+00:00"},
           "refine_target": 95, "refine_max_rounds": 5,
           "verdict_first": 85.0, "verdict_final": 88.0, "refine_rounds": 1, "refine_accepted": null
         }

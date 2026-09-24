@@ -1,10 +1,10 @@
 # Pipeline snapshot contract fixtures
 
 Source: the job-hunter (bot) repo, `docs/PIPELINE_SNAPSHOT_CONTRACT.md` at
-`origin/master` 0223c2b (docs/PIPELINE_VIZ_PLAN.md M2, incl. #296's
-`run.refine_target` / `run.refine_max_rounds`), with `expected.json` taken
-from the bot branch `feat/snapshot-event-details` @ 1b6f77e (adds
-`events[].details`; `fixture.sql` is unchanged by it). The bot owns the contract; these files are copies, not originals.
+`origin/master` 5c35447 (docs/PIPELINE_VIZ_PLAN.md M2 — incl. #296
+`run.refine_target` / `run.refine_max_rounds` and #297 `events[].details`,
+user-scoped events + open-run lookup, raw `ts` on `run.last_event` /
+`run.refine_progress`). The bot owns the contract; these files are copies, not originals.
 
 - `schema.sql` — the empty tracker.db the contract's fixture is applied to
   (bot `hunter.db.init_db()` + the four lazy DDLs + `config`), generated from

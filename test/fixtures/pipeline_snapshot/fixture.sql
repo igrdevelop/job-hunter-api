@@ -1,5 +1,5 @@
 -- Pipeline snapshot contract fixture (rows).
--- Source: job-hunter (bot) repo, docs/PIPELINE_SNAPSHOT_CONTRACT.md @ origin/master 9d338e8.
+-- Source: job-hunter (bot) repo, docs/PIPELINE_SNAPSHOT_CONTRACT.md @ origin/master 5c35447.
 -- Verbatim copy of the contract's `fixture.sql` block; applied on top of schema.sql.
 -- Do not edit by hand: re-copy from the bot repo when the contract changes.
 

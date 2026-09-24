@@ -1,5 +1,5 @@
 -- Pipeline snapshot contract fixture (schema).
--- Source: job-hunter (bot) repo @ origin/master 9d338e8 — the DB the contract's
+-- Source: job-hunter (bot) repo @ origin/master 5c35447 — the DB the contract's
 -- fixture.sql is applied to: hunter.db.init_db() + postings_seen._ensure_table,
 -- source_health._ensure_table, metrics._ensure_tables, hunt_runs._ensure_table
 -- + the config KV table, dumped from sqlite_master in creation order.
@@ -160,6 +160,7 @@ CREATE TABLE pipeline_events (
     payload     TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX idx_pipeline_events_run_id ON pipeline_events(run_id, id);
+CREATE INDEX idx_pipeline_events_ts ON pipeline_events(ts);
 CREATE TABLE hunt_runs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     ts              TEXT    NOT NULL,

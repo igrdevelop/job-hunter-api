@@ -10,9 +10,8 @@
  * Omitted, per the contract's "Not in the contract" section: `hunt.next_slot`,
  * `hunt.window`, `apply.queue_enabled_local_config`, `apply.failures.next_retry`,
  * the whole `coverage` object, `events[].payload`, and every `at` display
- * string (callers format from the raw `ts`). Because dropping `at` would leave
- * `run.last_event` and `run.refine_progress` with no time at all, both carry
- * the raw `ts` instead — the one addition over the contract.
+ * string (callers format from the raw `ts`, which `run.last_event` and
+ * `run.refine_progress` also carry since contract 5c35447).
  *
  * Read-only by construction: the caller hands in a `readonly` better-sqlite3
  * handle, and every statement here is a SELECT / PRAGMA table_info.
@@ -481,10 +480,9 @@ export function refineConfig(
 }
 
 /**
- * Port of `_open_run_for`. Deliberate difference: the lookup also carries
- * `(user_id = ? OR user_id = '')`, the tool's own `apply.runs` predicate —
- * two users can hold the same vacancy (same url_norm), and one user's card
- * must never show the other's run. Identical on a one-user DB.
+ * Port of `_open_run_for`. Scoped like `apply.runs` (contract "User
+ * scoping"): `(user_id = ? OR user_id = '')` — two users can hold the same
+ * vacancy (same url_norm), and one user's card must never show the other's run.
  */
 function openRunFor(
   db: Database.Database,
@@ -864,18 +862,12 @@ export function eventDetails(payload: unknown): Record<string, unknown> | null {
  * Port of `recent_events` (minus `at` and the 80-char `payload` display
  * string — still "Not in the contract"; `details` is its parsed replacement).
  *
- * Deliberate difference: user-scoped. The tool reads the footer with no
- * user predicate and a company subquery that can pick ANY user's row for a
- * shared url_norm — fine for a single-owner CLI, a leak of another user's
- * company names on a multi-user page. Runs are filtered with the tool's own
- * `apply.runs` predicate and the company lookup is restricted to the caller
- * (plus `url_norm != ''`, which lets SQLite use idx_user_url_norm and stops
- * a paste-mode run from borrowing a random blank-url row's company).
- * Identical output on a one-user DB with no paste-mode runs.
- *
- * NOTE: pipeline_events has no index on `ts` (and no prune), so the ORDER BY
- * sorts the whole table. Cheap at today's volume; an index is a bot-side
- * change (the bot owns the schema).
+ * Scoped per the contract's "User scoping" section: runs by
+ * `(r.user_id = ? OR r.user_id = '')`, the company lookup by
+ * `a.user_id = ?` and skipping a blank `r.url_norm` (a paste-mode run). The
+ * extra `a.url_norm != ''` is implied by those two and only lets SQLite use
+ * the partial idx_user_url_norm. The ORDER BY uses idx_pipeline_events_ts
+ * (bot metrics.py since 5c35447) where the bot has created it.
  */
 function recentEvents(
   db: Database.Database,
@@ -890,7 +882,7 @@ function recentEvents(
     return null;
   }
   const company = schema.columns('applications').has('url_norm')
-    ? "(SELECT company FROM applications a WHERE a.user_id = ? AND a.url_norm = r.url_norm AND a.url_norm != '' LIMIT 1)"
+    ? "(SELECT company FROM applications a WHERE a.url_norm = r.url_norm AND r.url_norm != '' AND a.user_id = ? AND a.url_norm != '' LIMIT 1)"
     : "(SELECT '' WHERE ? IS NOT NULL)";
   const rows = db
     .prepare(
