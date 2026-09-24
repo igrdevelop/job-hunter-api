@@ -53,7 +53,9 @@ reviews:
         (5) better-sqlite3 is synchronous — flag heavy queries or file I/O
         that would block the event loop on hot request paths.
         (6) Shared contracts with the bot repo (profile_jobs queue DDL,
-        telegram_link_codes, docs/RESUME_PROFILE_STORE.md) must not drift —
+        telegram_link_codes, docs/RESUME_PROFILE_STORE.md, and the bot's
+        docs/PIPELINE_SNAPSHOT_CONTRACT.md that src/pipeline/ ports — whose
+        hunt tier is global BY DESIGN, not a missing user filter) must not drift —
         flag changes to those shapes that aren't called out as cross-repo.
     - path: ".github/workflows/**"
       instructions: >-
