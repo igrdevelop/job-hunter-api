@@ -15,6 +15,11 @@ export default () => ({
   users: { root: process.env.USERS_ROOT || './data/users' },
   // Bot .env (read-only settings page). Mounted from the bot project in prod.
   bot: { envPath: process.env.BOT_ENV_PATH || './data/.env' },
+  // docs/PIPELINE_VIZ_PLAN.md M2: the bot's logs/apply_failures.jsonl, for
+  // /api/pipeline/snapshot's apply.failures.log_records. Unset (the default,
+  // and prod today: the bot's logs/ dir is not mounted into this container)
+  // → that key is null, which the contract allows.
+  pipeline: { failuresLogPath: process.env.APPLY_FAILURES_LOG_PATH || '' },
   mail: {
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587,
