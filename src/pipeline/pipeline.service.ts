@@ -24,7 +24,7 @@ const SLOW_SNAPSHOT_MS = 200;
 const TRANSIENT_SQLITE_CODE =
   /^SQLITE_(BUSY|IOERR|CORRUPT|NOTADB|CANTOPEN)(_|$)/;
 
-function sqliteCode(err: unknown): string | null {
+export function sqliteCode(err: unknown): string | null {
   const code = (err as { code?: unknown } | null)?.code;
   return typeof code === 'string' && TRANSIENT_SQLITE_CODE.test(code)
     ? code

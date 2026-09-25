@@ -96,5 +96,17 @@ export function runTrackerMigrations(
     );
     CREATE INDEX IF NOT EXISTS idx_profile_jobs_status
       ON profile_jobs(status, created_at);
+
+    -- Operational commands from the /pipeline page to the bot (hunt,
+    -- retry_failed, check_expired). Same precedent as profile_jobs: API
+    -- writes pending rows, the bot drains them. The DDL is the shared
+    -- contract (the bot's hunter/db.py carries the same statements) — never
+    -- change it on one side only.
+    CREATE TABLE IF NOT EXISTS bot_commands (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending',
+      result TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT);
+    CREATE INDEX IF NOT EXISTS idx_bot_commands_status ON bot_commands(status, created_at);
   `);
 }

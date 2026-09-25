@@ -174,4 +174,120 @@ describe('PipelineModule (e2e)', () => {
     ).toEqual(before);
     tracker.close();
   });
+
+  describe('commands', () => {
+    const post = (body: unknown, token?: string) => {
+      const req = request(app.getHttpServer())
+        .post('/api/pipeline/commands')
+        .send(body as object);
+      return token ? req.set('Authorization', `Bearer ${token}`) : req;
+    };
+    const exec = (sql: string) => {
+      const tracker = new Database(trackerDbPath);
+      tracker.exec(sql);
+      tracker.close();
+    };
+
+    it('401 without a token', async () => {
+      await post({ kind: 'hunt' }).expect(401);
+      await get('/api/pipeline/commands/c_exp').expect(401);
+    });
+
+    it('403 for a non-owner, on both routes', async () => {
+      await post({ kind: 'check_expired' }, tokenB).expect(403);
+      await get('/api/pipeline/commands/c_exp', tokenB).expect(403);
+    });
+
+    it.each([
+      [{}],
+      [{ kind: 'deploy' }],
+      [{ kind: 'hunt', sources: 'linkedin' }],
+      [{ kind: 'hunt', sources: [] }],
+      [{ kind: 'hunt', sources: [1] }],
+      [{ kind: 'hunt', sources: [''] }],
+      [{ kind: 'retry_failed', sources: ['linkedin'] }],
+      [{ kind: 'hunt', sources: ['nope'] }],
+    ])('400 for %j', async (body) => {
+      await post(body, tokenA).expect(400);
+    });
+
+    it('409 for hunt / retry_failed while the fixture hunt is live', async () => {
+      const res = await post({ kind: 'hunt' }, tokenA).expect(409);
+      expect(res.body.message).toMatch(/h_live/);
+      await post({ kind: 'retry_failed' }, tokenA).expect(409);
+    });
+
+    it('check_expired is accepted during a hunt, once', async () => {
+      const { body } = await post({ kind: 'check_expired' }, tokenA).expect(
+        201,
+      );
+      expect(Object.keys(body)).toEqual(['id']);
+      const cmd = await get(`/api/pipeline/commands/${body.id}`, tokenA).expect(
+        200,
+      );
+      expect(cmd.body).toEqual({
+        id: body.id,
+        kind: 'check_expired',
+        payload: {},
+        status: 'pending',
+        error: '',
+        result: '',
+        created_at: '2026-09-22T12:00:00+00:00',
+        started_at: null,
+        finished_at: null,
+      });
+      await post({ kind: 'check_expired' }, tokenA).expect(409);
+      // The new command is the newest in the snapshot's control block.
+      const snap = await get('/api/pipeline/snapshot', tokenA).expect(200);
+      expect(snap.body.control.commands[0]).toMatchObject({
+        id: body.id,
+        status: 'pending',
+      });
+      expect(snap.body.hunt.live.active.hunt_id).toBe('h_live');
+      exec(`UPDATE bot_commands SET status = 'done' WHERE id = '${body.id}'`);
+    });
+
+    it('409 while a hunt command is still running, 201 once idle', async () => {
+      exec(
+        "UPDATE hunt_live SET step = 'done', finished_at = '2026-09-22T11:59:00+00:00'",
+      );
+      // c_hunt (fixture) is still `running`.
+      await post({ kind: 'retry_failed' }, tokenA).expect(409);
+      exec("UPDATE bot_commands SET status = 'done' WHERE id = 'c_hunt'");
+
+      const { body } = await post(
+        { kind: 'hunt', sources: ['linkedin', 'justjoin'] },
+        tokenA,
+      ).expect(201);
+      const cmd = await get(`/api/pipeline/commands/${body.id}`, tokenA).expect(
+        200,
+      );
+      expect(cmd.body.payload).toEqual({ sources: ['linkedin', 'justjoin'] });
+
+      const tracker = new Database(trackerDbPath, { readonly: true });
+      expect(
+        tracker
+          .prepare('SELECT user_id FROM bot_commands WHERE id = ?')
+          .get(body.id),
+      ).toEqual({ user_id: userIdA });
+      tracker.close();
+
+      // The new pending hunt blocks the next one.
+      await post({ kind: 'hunt' }, tokenA).expect(409);
+      exec(`UPDATE bot_commands SET status = 'done' WHERE id = '${body.id}'`);
+    });
+
+    it('503 when the bot has not published its sources', async () => {
+      exec("DELETE FROM config WHERE key = 'bot_state.sources'");
+      const res = await post(
+        { kind: 'hunt', sources: ['linkedin'] },
+        tokenA,
+      ).expect(503);
+      expect(res.body.message).toBe('bot state unavailable');
+    });
+
+    it('404 for an unknown command id', async () => {
+      await get('/api/pipeline/commands/does-not-exist', tokenA).expect(404);
+    });
+  });
 });

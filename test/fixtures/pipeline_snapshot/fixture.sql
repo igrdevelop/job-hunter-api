@@ -107,3 +107,35 @@ INSERT INTO pipeline_events (run_id, ts, stage, event, duration_ms, payload) VAL
 
 -- LLM outage pause armed until NOW + 30 min (epoch seconds of 2026-09-22T12:30:00Z)
 INSERT INTO config (key, value) VALUES ('llm_outage_until', '1790080200');
+
+-- /pipeline control additions (shared contract of the "live loaders, next-run
+-- time, action buttons" plan). Appended until the bot contract's own
+-- fixture.sql carries them.
+-- hunt_live: one hunt running right now (a web command, LinkedIn only, still
+-- fetching), the last finished one (the 11:50 hunt_runs row) and an older one.
+INSERT INTO hunt_live (hunt_id, "trigger", sources, started_at, step, step_started_at,
+    current_source, sources_done, sources_total, found_so_far, command_id, finished_at) VALUES
+  ('h_old',  'scheduled', '["justjoin"]',           '2026-09-22T08:00:00+00:00', 'done',  '2026-09-22T08:00:05+00:00',
+   '', 1, 1, 120, '', '2026-09-22T08:00:05+00:00'),
+  ('h_prev', 'manual',    '["pracuj", "justjoin"]', '2026-09-22T11:50:00+00:00', 'done',  '2026-09-22T11:50:10+00:00',
+   '', 2, 2, 110, '', '2026-09-22T11:50:10+00:00'),
+  ('h_live', 'web',       '["linkedin"]',           '2026-09-22T11:58:00+00:00', 'fetch', '2026-09-22T11:58:05+00:00',
+   'linkedin', 0, 1, 0, 'c_hunt', NULL);
+
+-- bot_commands: the running LinkedIn hunt, a finished expired-check, a
+-- rejected hunt-all (the lock was busy).
+INSERT INTO bot_commands (id, user_id, kind, payload, status, result, error,
+    created_at, started_at, finished_at) VALUES
+  ('c_exp',  'u1', 'check_expired', '{}',                     'done',     '{"checked": 5}', '',
+   '2026-09-22T09:00:00+00:00', '2026-09-22T09:00:02+00:00', '2026-09-22T09:01:00+00:00'),
+  ('c_rej',  'u1', 'hunt',          '{"sources": null}',      'rejected', '', 'hunt already running',
+   '2026-09-22T10:00:00+00:00', NULL, '2026-09-22T10:00:03+00:00'),
+  ('c_hunt', 'u1', 'hunt',          '{"sources": ["linkedin"]}', 'running', '', '',
+   '2026-09-22T11:57:58+00:00', '2026-09-22T11:58:00+00:00', NULL);
+
+-- Scheduler facts the bot's 60 s tick writes (JSON values).
+INSERT INTO config (key, value) VALUES
+  ('bot_state.next_hunt',  '{"at": "2026-09-22T12:20:00+00:00", "source": "justremote", "sources_total": 25}'),
+  ('bot_state.next_retry', '{"at": "2026-09-23T00:45:00+00:00"}'),
+  ('bot_state.sources',    '["justjoin", "pracuj", "linkedin", "justremote"]'),
+  ('bot_state.updated_at', '"2026-09-22T11:59:30+00:00"');
