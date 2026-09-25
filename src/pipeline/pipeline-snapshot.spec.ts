@@ -457,6 +457,27 @@ describe('pipeline snapshot — live hunt, next run, control', () => {
     expect(s.hunt.live.last.sources).toEqual(['linkedin']);
   });
 
+  it('active prefers the running hunt over a newer one waiting for the lock', () => {
+    const queued =
+      'INSERT INTO hunt_live (hunt_id, "trigger", sources, started_at, step, step_started_at) ' +
+      "VALUES ('h_wait', 'scheduled', '[\"pracuj\"]', '2026-09-22T11:59:00+00:00', 'waiting', '2026-09-22T11:59:00+00:00');";
+    let db = contractDbWith(queued);
+    let s = snap(db);
+    db.close();
+    expect(s.hunt.live.active.hunt_id).toBe('h_live');
+    expect(s.hunt.live.active.step).toBe('fetch');
+
+    db = contractDbWith(
+      queued +
+        "UPDATE hunt_live SET step = 'done', finished_at = '2026-09-22T11:59:30+00:00' WHERE hunt_id = 'h_live';",
+    );
+    s = snap(db);
+    db.close();
+    expect(s.hunt.live.active.hunt_id).toBe('h_wait');
+    expect(s.hunt.live.active.step).toBe('waiting');
+    expect(s.hunt.live.last.hunt_id).toBe('h_live');
+  });
+
   it('an empty hunt_live table is {active: null, last: null}', () => {
     const db = contractDbWith('DELETE FROM hunt_live;');
     const s = snap(db);

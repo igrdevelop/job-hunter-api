@@ -444,8 +444,9 @@ function huntLiveRow(r: Row | undefined): Row | null {
 
 /**
  * `hunt.live` = `{active, last}`: `active` is the newest row not yet
- * finished (a hunt waiting for the lock or running), `last` the newest
- * finished one. The bot creates `hunt_live` lazily, so a missing (or
+ * finished, preferring one past `waiting` — a hunt queued behind the lock
+ * writes its own, NEWER `waiting` row, and the page must keep showing the
+ * hunt that is actually fetching; `last` is the newest finished one. The bot creates `hunt_live` lazily, so a missing (or
  * partially-migrated) table is `null` — "not measured", never an empty hunt.
  */
 function huntLive(db: Database.Database, schema: Schema): Row | null {
@@ -454,7 +455,7 @@ function huntLive(db: Database.Database, schema: Schema): Row | null {
   const active = db
     .prepare(
       `SELECT ${cols} FROM hunt_live WHERE finished_at IS NULL
-       ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+       ORDER BY (step = 'waiting'), started_at DESC, rowid DESC LIMIT 1`,
     )
     .get() as Row | undefined;
   const last = db
