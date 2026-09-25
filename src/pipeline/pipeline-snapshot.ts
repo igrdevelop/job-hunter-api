@@ -136,6 +136,34 @@ const PIPELINE_EVENTS_COLUMNS = [
   'payload',
 ];
 const CONFIG_COLUMNS = ['key', 'value'];
+/** `hunt_live` — the bot's per-hunt live state (shared contract DDL). */
+export const HUNT_LIVE_COLUMNS = [
+  'hunt_id',
+  'trigger',
+  'sources',
+  'started_at',
+  'step',
+  'step_started_at',
+  'current_source',
+  'sources_done',
+  'sources_total',
+  'found_so_far',
+  'command_id',
+  'finished_at',
+];
+/** The `bot_commands` columns `control.commands` serves. */
+const BOT_COMMANDS_COLUMNS = [
+  'id',
+  'kind',
+  'payload',
+  'status',
+  'error',
+  'created_at',
+  'started_at',
+  'finished_at',
+];
+/** `control.commands` carries this many newest rows. */
+export const CONTROL_COMMANDS_LIMIT = 10;
 
 /** The two `applications` columns without which nothing can be scoped. */
 const APPLICATIONS_REQUIRED_COLUMNS = ['user_id', 'ats_status'];
@@ -379,10 +407,12 @@ function huntTier(
     by_status: byStatus.toObject(),
     by_source: bySource.mostCommon(10),
   };
+  out.live = huntLive(db, schema);
+  out.next = huntNext(db, schema);
   return out;
 }
 
-// ── Apply tier ────────────────────────────────────────────────────────────────
+// ── Live hunt state, scheduler facts, control (docs: /pipeline control plan) ──
 
 function scalar(db: Database.Database, sql: string, ...params: unknown[]) {
   const row = db
@@ -391,6 +421,131 @@ function scalar(db: Database.Database, sql: string, ...params: unknown[]) {
     .get(...params) as unknown[] | undefined;
   return row ? row[0] : undefined;
 }
+
+/** Map one `hunt_live` row to its contract shape (`sources` parsed). */
+function huntLiveRow(r: Row | undefined): Row | null {
+  if (!r) return null;
+  const sources = parseJson(r.sources, '[]');
+  return {
+    hunt_id: r.hunt_id,
+    trigger: r.trigger,
+    sources: Array.isArray(sources) ? sources : [],
+    started_at: r.started_at,
+    step: r.step,
+    step_started_at: r.step_started_at,
+    current_source: r.current_source ?? '',
+    sources_done: r.sources_done,
+    sources_total: r.sources_total,
+    found_so_far: r.found_so_far,
+    command_id: r.command_id ?? '',
+    finished_at: r.finished_at ?? null,
+  };
+}
+
+/**
+ * `hunt.live` = `{active, last}`: `active` is the newest row not yet
+ * finished (a hunt waiting for the lock or running), `last` the newest
+ * finished one. The bot creates `hunt_live` lazily, so a missing (or
+ * partially-migrated) table is `null` — "not measured", never an empty hunt.
+ */
+function huntLive(db: Database.Database, schema: Schema): Row | null {
+  if (!schema.has('hunt_live', HUNT_LIVE_COLUMNS)) return null;
+  const cols = HUNT_LIVE_COLUMNS.map((c) => `"${c}"`).join(', ');
+  const active = db
+    .prepare(
+      `SELECT ${cols} FROM hunt_live WHERE finished_at IS NULL
+       ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get() as Row | undefined;
+  const last = db
+    .prepare(
+      `SELECT ${cols} FROM hunt_live WHERE finished_at IS NOT NULL
+       ORDER BY started_at DESC, rowid DESC LIMIT 1`,
+    )
+    .get() as Row | undefined;
+  return { active: huntLiveRow(active), last: huntLiveRow(last) };
+}
+
+/**
+ * One `config` KV value, JSON-decoded (every `bot_state.*` value is JSON).
+ * `undefined` when the key is absent or its value doesn't parse.
+ */
+function configJson(db: Database.Database, key: string): unknown {
+  const raw = scalar(db, 'SELECT value FROM config WHERE key = ?', key);
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `hunt.next` = `{hunt, retry, updated_at}` from the bot's `bot_state.*`
+ * config keys — the scheduler's own `next_t`, written by its 60 s tick.
+ * No `config` table ⇒ `null`; a missing/garbled key ⇒ that field `null`.
+ * `updated_at` older than 5 min means the bot is offline (the site decides).
+ */
+function huntNext(db: Database.Database, schema: Schema): Row | null {
+  if (!schema.has('config', CONFIG_COLUMNS)) return null;
+  const hunt = configJson(db, 'bot_state.next_hunt');
+  const retry = configJson(db, 'bot_state.next_retry');
+  const updated = configJson(db, 'bot_state.updated_at');
+  return {
+    hunt: isPlainObject(hunt) ? hunt : null,
+    retry: isPlainObject(retry) ? retry : null,
+    updated_at: typeof updated === 'string' ? updated : null,
+  };
+}
+
+/**
+ * `bot_state.sources` — the bot's source names (for the per-source hunt
+ * buttons and for validating a hunt command). `null` when the `config`
+ * table or the key is missing, or the value isn't a list of strings.
+ */
+export function botSources(
+  db: Database.Database,
+  schema?: { has(table: string, required: readonly string[]): boolean },
+): string[] | null {
+  const s = schema ?? new Schema(db);
+  if (!s.has('config', CONFIG_COLUMNS)) return null;
+  const v = configJson(db, 'bot_state.sources');
+  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null;
+}
+
+/**
+ * `control` = `{sources, commands}` — `commands` is the 10 newest
+ * `bot_commands` rows (`payload` parsed; `null` for a garbled one), `null`
+ * when the table is missing. Global like the hunt tier: commands are
+ * owner-only to CREATE, and every one of them acts on the shared bot.
+ */
+function control(db: Database.Database, schema: Schema): Row {
+  let commands: Row[] | null = null;
+  if (schema.has('bot_commands', BOT_COMMANDS_COLUMNS)) {
+    const rows = db
+      .prepare(
+        `SELECT id, kind, payload, status, error, created_at, started_at, finished_at
+         FROM bot_commands ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(CONTROL_COMMANDS_LIMIT) as Row[];
+    commands = rows.map((r) => {
+      const payload = parseJson(r.payload, '{}');
+      return {
+        id: r.id,
+        kind: r.kind,
+        payload: payload === undefined ? null : payload,
+        status: r.status,
+        error: (r.error as string) ?? '',
+        created_at: r.created_at,
+        started_at: r.started_at ?? null,
+        finished_at: r.finished_at ?? null,
+      };
+    });
+  }
+  return { sources: botSources(db, schema), commands };
+}
+
+// ── Apply tier ────────────────────────────────────────────────────────────────
 
 /** Port of `_infer_stage`. */
 export function inferStage(events: Pick<EventRow, 'stage' | 'event'>[]): {
@@ -986,6 +1141,7 @@ export function buildSnapshot(
       opts.userId,
       opts.eventsLimit ?? DEFAULT_EVENTS_LIMIT,
     ),
+    control: control(db, schema),
   }));
   return read();
 }

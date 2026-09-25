@@ -343,7 +343,11 @@ describe('pipeline snapshot — degraded schemas', () => {
         by_status: { PENDING: 1, IN_PROGRESS: 1, APPLIED: 1, FAIL: 1 },
         by_source: [['(blank)', 4]],
       },
+      // No hunt_live / config table: not measured, never an empty hunt.
+      live: null,
+      next: null,
     });
+    expect(snap.control).toEqual({ sources: null, commands: null });
     expect(snap.apply).toEqual({
       queue_mode_observed: true,
       pending: {
@@ -398,7 +402,9 @@ describe('pipeline snapshot — degraded schemas', () => {
          CREATE TABLE generation_runs (run_id TEXT PRIMARY KEY, started_at TEXT);
          CREATE TABLE pipeline_events (id INTEGER PRIMARY KEY, run_id TEXT);
          CREATE TABLE source_runs (id INTEGER PRIMARY KEY, source TEXT);
-         CREATE TABLE config (key TEXT PRIMARY KEY);`,
+         CREATE TABLE config (key TEXT PRIMARY KEY);
+         CREATE TABLE hunt_live (hunt_id TEXT PRIMARY KEY, step TEXT);
+         CREATE TABLE bot_commands (id TEXT PRIMARY KEY, kind TEXT);`,
     );
     const snap = asJson(buildSnapshot(db, { days: 1, userId: 'u1', now: NOW }));
     db.close();
@@ -413,6 +419,9 @@ describe('pipeline snapshot — degraded schemas', () => {
     expect(snap.apply.in_progress.cards[0].run).toBeNull();
     expect(snap.apply.llm_outage).toEqual({ paused: false, remaining_min: 0 });
     expect(snap.events).toBeNull();
+    expect(snap.hunt.live).toBeNull();
+    expect(snap.hunt.next).toBeNull();
+    expect(snap.control).toEqual({ sources: null, commands: null });
   });
 
   it('no applications table is a schema error, not a crash', () => {
@@ -421,6 +430,109 @@ describe('pipeline snapshot — degraded schemas', () => {
       buildSnapshot(db, { days: 1, userId: 'u1', now: NOW }),
     ).toThrow(TrackerSchemaError);
     db.close();
+  });
+});
+
+describe('pipeline snapshot — live hunt, next run, control', () => {
+  /** The contract DB with `sql` applied on top, reopened read-only. */
+  function contractDbWith(sql: string): Database.Database {
+    const path = tmpDbPath('pipeline-ctl-');
+    buildContractDb(path);
+    const w = new Database(path);
+    w.exec(sql);
+    w.close();
+    return new Database(path, { readonly: true });
+  }
+  const snap = (db: Database.Database) =>
+    asJson(buildSnapshot(db, { days: 1, userId: 'u1', now: NOW }));
+
+  it('no unfinished hunt_live row: active is null, last is the newest finished', () => {
+    const db = contractDbWith(
+      "UPDATE hunt_live SET step = 'done', finished_at = '2026-09-22T11:59:00+00:00' WHERE hunt_id = 'h_live';",
+    );
+    const s = snap(db);
+    db.close();
+    expect(s.hunt.live.active).toBeNull();
+    expect(s.hunt.live.last.hunt_id).toBe('h_live');
+    expect(s.hunt.live.last.sources).toEqual(['linkedin']);
+  });
+
+  it('an empty hunt_live table is {active: null, last: null}', () => {
+    const db = contractDbWith('DELETE FROM hunt_live;');
+    const s = snap(db);
+    db.close();
+    expect(s.hunt.live).toEqual({ active: null, last: null });
+  });
+
+  it('a garbled sources column parses to [] instead of throwing', () => {
+    const db = contractDbWith(
+      "UPDATE hunt_live SET sources = 'not json' WHERE hunt_id = 'h_live';",
+    );
+    const s = snap(db);
+    db.close();
+    expect(s.hunt.live.active.sources).toEqual([]);
+  });
+
+  it('missing bot_state keys are null fields, never zeros', () => {
+    const db = contractDbWith(
+      "DELETE FROM config WHERE key LIKE 'bot_state.%';",
+    );
+    const s = snap(db);
+    db.close();
+    expect(s.hunt.next).toEqual({ hunt: null, retry: null, updated_at: null });
+    expect(s.control.sources).toBeNull();
+    // llm_outage still reads its own key from the same table.
+    expect(s.apply.llm_outage.paused).toBe(true);
+  });
+
+  it('garbled bot_state values are null, never a crash', () => {
+    const db = contractDbWith(`
+      UPDATE config SET value = 'not json' WHERE key = 'bot_state.next_hunt';
+      UPDATE config SET value = '[1, 2]' WHERE key = 'bot_state.sources';
+      UPDATE config SET value = '{"x": 1}' WHERE key = 'bot_state.updated_at';
+      UPDATE bot_commands SET payload = '{oops' WHERE id = 'c_hunt';
+    `);
+    const s = snap(db);
+    db.close();
+    expect(s.hunt.next.hunt).toBeNull();
+    expect(s.hunt.next.retry).toEqual({ at: '2026-09-23T00:45:00+00:00' });
+    expect(s.hunt.next.updated_at).toBeNull();
+    expect(s.control.sources).toBeNull();
+    expect(s.control.commands[0]).toMatchObject({
+      id: 'c_hunt',
+      payload: null,
+    });
+  });
+
+  it('control.commands is the 10 newest, newest first, without user_id/result', () => {
+    const inserts = Array.from(
+      { length: 12 },
+      (_, i) =>
+        `('n${i}', 'u1', 'retry_failed', '{}', 'done', 'r', '', ` +
+        `'2026-09-22T11:59:${String(i).padStart(2, '0')}+00:00', NULL, NULL)`,
+    ).join(', ');
+    const db = contractDbWith(
+      `INSERT INTO bot_commands (id, user_id, kind, payload, status, result, error,
+         created_at, started_at, finished_at) VALUES ${inserts};`,
+    );
+    const s = snap(db);
+    db.close();
+    expect(s.control.commands).toHaveLength(10);
+    expect(s.control.commands.map((c: { id: string }) => c.id)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `n${11 - i}`),
+    );
+    expect(Object.keys(s.control.commands[0]).sort()).toEqual(
+      [
+        'created_at',
+        'error',
+        'finished_at',
+        'id',
+        'kind',
+        'payload',
+        'started_at',
+        'status',
+      ].sort(),
+    );
   });
 });
 

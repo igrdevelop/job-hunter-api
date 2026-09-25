@@ -27,6 +27,23 @@
       "by_status": {"APPLIED": 5, "EXPIRED": 1, "FAIL": 2, "IN_PROGRESS": 1, "PENDING": 2, "SKIP": 1},
       "by_source": [["justjoin", 12]]
     },
+    "live": {
+      "active": {"hunt_id": "h_live", "trigger": "web", "sources": ["linkedin"],
+                 "started_at": "2026-09-22T11:58:00+00:00", "step": "fetch",
+                 "step_started_at": "2026-09-22T11:58:05+00:00", "current_source": "linkedin",
+                 "sources_done": 0, "sources_total": 1, "found_so_far": 0,
+                 "command_id": "c_hunt", "finished_at": null},
+      "last": {"hunt_id": "h_prev", "trigger": "manual", "sources": ["pracuj", "justjoin"],
+               "started_at": "2026-09-22T11:50:00+00:00", "step": "done",
+               "step_started_at": "2026-09-22T11:50:10+00:00", "current_source": "",
+               "sources_done": 2, "sources_total": 2, "found_so_far": 110,
+               "command_id": "", "finished_at": "2026-09-22T11:50:10+00:00"}
+    },
+    "next": {
+      "hunt": {"at": "2026-09-22T12:20:00+00:00", "source": "justremote", "sources_total": 25},
+      "retry": {"at": "2026-09-23T00:45:00+00:00"},
+      "updated_at": "2026-09-22T11:59:30+00:00"
+    },
     "next_slot": {"at": "14:20", "in_min": 20, "source": "justremote", "sources_total": 25}
   },
   "apply": {
@@ -86,6 +103,17 @@
     {"at": "12:20", "ts": "2026-09-22T10:20:00+00:00", "stage": "fetch", "event": "ok", "duration_ms": 1000, "company": "Lambda", "pipeline": "cli", "payload": "", "details": null},
     {"at": "12:20", "ts": "2026-09-22T10:20:00+00:00", "stage": "fetch", "event": "ok", "duration_ms": 1000, "company": "Kappa", "pipeline": "cli", "payload": "", "details": null}
   ],
+  "control": {
+    "sources": ["justjoin", "pracuj", "linkedin", "justremote"],
+    "commands": [
+      {"id": "c_hunt", "kind": "hunt", "payload": {"sources": ["linkedin"]}, "status": "running", "error": "",
+       "created_at": "2026-09-22T11:57:58+00:00", "started_at": "2026-09-22T11:58:00+00:00", "finished_at": null},
+      {"id": "c_rej", "kind": "hunt", "payload": {"sources": null}, "status": "rejected", "error": "hunt already running",
+       "created_at": "2026-09-22T10:00:00+00:00", "started_at": null, "finished_at": "2026-09-22T10:00:03+00:00"},
+      {"id": "c_exp", "kind": "check_expired", "payload": {}, "status": "done", "error": "",
+       "created_at": "2026-09-22T09:00:00+00:00", "started_at": "2026-09-22T09:00:02+00:00", "finished_at": "2026-09-22T09:01:00+00:00"}
+    ]
+  },
   "coverage": {
     "1_run_coverage": {"rows_produced": 9, "excluded_blank_source": 0, "with_generation_run": 6, "share_pct": 66.7,
                        "threshold": ">= 90", "verdict": "FAIL",

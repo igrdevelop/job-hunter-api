@@ -180,3 +180,18 @@ CREATE TABLE hunt_runs (
 );
 CREATE INDEX idx_hunt_runs_ts ON hunt_runs(ts);
 CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT);
+-- /pipeline control (shared contract DDL, bot PR "live loaders, next-run time,
+-- action buttons"): bot_commands (API writes, bot drains) and hunt_live (bot
+-- writes one row per hunt). Appended until the bot's own schema dump carries them.
+CREATE TABLE bot_commands (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'pending',
+  result TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT);
+CREATE INDEX idx_bot_commands_status ON bot_commands(status, created_at);
+CREATE TABLE hunt_live (
+  hunt_id TEXT PRIMARY KEY, trigger TEXT NOT NULL, sources TEXT NOT NULL DEFAULT '[]',
+  started_at TEXT NOT NULL, step TEXT NOT NULL, step_started_at TEXT NOT NULL,
+  current_source TEXT NOT NULL DEFAULT '', sources_done INTEGER NOT NULL DEFAULT 0,
+  sources_total INTEGER NOT NULL DEFAULT 0, found_so_far INTEGER NOT NULL DEFAULT 0,
+  command_id TEXT NOT NULL DEFAULT '', finished_at TEXT);
