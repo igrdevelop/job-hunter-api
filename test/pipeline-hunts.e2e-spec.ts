@@ -125,6 +125,9 @@ describe('Pipeline hunts (e2e)', () => {
     'days=0',
     'days=31',
     'days=1.5',
+    'offset=',
+    'limit=%20',
+    'days=',
   ])('400 for %p', async (query) => {
     await get(`/api/pipeline/hunts?${query}`).expect(400);
   });
