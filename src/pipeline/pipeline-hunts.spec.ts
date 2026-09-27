@@ -44,11 +44,22 @@ describe('pipeline hunts — contract fixture', () => {
     );
   });
 
-  it('limit keeps the newest hunts', () => {
-    const list = huntsList(db, { ...opts, limit: 2 }) as {
-      hunts: { hunt_id: string }[];
-    };
-    expect(list.hunts.map((h) => h.hunt_id)).toEqual(['h_run', 'h_done']);
+  it('the window is Warsaw days: today vs 7 days, paged', () => {
+    type List = { total: number; hunts: { hunt_id: string }[] };
+    const ids = (l: unknown) => (l as List).hunts.map((h) => h.hunt_id);
+    // Today starts at 00:00 Warsaw = 2026-09-26T22:00Z: h_midn in, h_yday out.
+    expect(ids(huntsList(db, opts))).toEqual([
+      'h_run',
+      'h_done',
+      'h_retry',
+      'h_err',
+      'h_midn',
+    ]);
+    const first = huntsList(db, { ...opts, days: 7, limit: 4 }) as List;
+    const second = huntsList(db, { ...opts, days: 7, limit: 4, offset: 4 });
+    expect(ids(first)).toEqual(['h_run', 'h_done', 'h_retry', 'h_err']);
+    expect(ids(second)).toEqual(['h_midn', 'h_yday']); // never h_old
+    expect(first.total).toBe(6);
   });
 
   it('unknown hunt is null', () => {

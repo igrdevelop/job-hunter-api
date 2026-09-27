@@ -46,7 +46,11 @@ export class PipelineController {
   @Get('hunts')
   hunts(@CurrentUser() user: CurrentUserData, @Query() query: HuntsQueryDto) {
     this.requireOwner(user);
-    return this.pipeline.getHunts(user.id, query.limit);
+    return this.pipeline.getHunts(user.id, {
+      days: query.days,
+      offset: query.offset,
+      limit: query.limit,
+    });
   }
 
   /** One hunt's drill-down → 404 when unknown. Owner-only, like the list. */

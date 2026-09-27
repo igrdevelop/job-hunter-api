@@ -117,14 +117,26 @@ describe('Pipeline hunts (e2e)', () => {
     expect(body).toEqual(EXPECTED_HUNTS);
   });
 
-  it.each(['0', '201', 'x', '1.5'])('400 for limit=%p', async (limit) => {
-    await get(`/api/pipeline/hunts?limit=${limit}`).expect(400);
+  it.each([
+    'limit=0',
+    'limit=501',
+    'limit=x',
+    'offset=-1',
+    'days=0',
+    'days=31',
+    'days=1.5',
+  ])('400 for %p', async (query) => {
+    await get(`/api/pipeline/hunts?${query}`).expect(400);
   });
 
-  it('limit keeps the newest', async () => {
-    const { body } = await get('/api/pipeline/hunts?limit=1').expect(200);
+  it('pages the 7-day window', async () => {
+    const { body } = await get(
+      '/api/pipeline/hunts?days=7&limit=4&offset=4',
+    ).expect(200);
+    expect(body.total).toBe(6);
     expect(body.hunts.map((h: { hunt_id: string }) => h.hunt_id)).toEqual([
-      'h_run',
+      'h_midn',
+      'h_yday',
     ]);
   });
 

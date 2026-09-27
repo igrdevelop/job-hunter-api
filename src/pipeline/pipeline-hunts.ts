@@ -85,7 +85,9 @@ const GENERATION_RUN_COLUMNS = [
   'refine_rounds',
 ];
 
-export const DEFAULT_HUNTS_LIMIT = 50;
+/** `HUNTS_PAGE` / `HUNTS_PAGE_MAX` — today (~75 hunts) fits one page. */
+export const HUNTS_PAGE = 100;
+export const HUNTS_PAGE_MAX = 500;
 
 interface JobRow {
   hunt_id: string;
@@ -389,20 +391,44 @@ function huntRow(live: Row, counts: HuntCounts | undefined): Row {
 /** Port of `hunts_list` → `{hunts}`, or null without `hunt_live`. */
 export function huntsList(
   db: Database.Database,
-  opts: { userId: string; now: Date; limit?: number },
+  opts: {
+    userId: string;
+    now: Date;
+    days?: number;
+    offset?: number;
+    limit?: number;
+  },
 ): Row | null {
   const schema = new Schema(db);
   if (!schema.has('hunt_live', HUNT_LIVE_COLUMNS)) return null;
   const nowMs = opts.now.getTime();
-  const limit = Math.max(1, Math.trunc(opts.limit ?? DEFAULT_HUNTS_LIMIT));
+  // Warsaw calendar days, the snapshot's own window; started_at is `+00:00`
+  // isoformat like startIso, so the text comparison is exact.
+  const win = new SnapshotWindow(
+    Math.max(1, Math.trunc(opts.days ?? 1)),
+    opts.now,
+  );
+  const limit = Math.min(
+    Math.max(1, Math.trunc(opts.limit ?? HUNTS_PAGE)),
+    HUNTS_PAGE_MAX,
+  );
+  const offset = Math.max(0, Math.trunc(opts.offset ?? 0));
   const cols = HUNT_LIVE_COLUMNS.map((c) => `"${c}"`).join(', ');
   const read = db.transaction(() => {
+    const total = Number(
+      (
+        db
+          .prepare('SELECT COUNT(*) AS n FROM hunt_live WHERE started_at >= ?')
+          .get(win.startIso) as { n: number }
+      ).n,
+    );
     const lives = (
       db
         .prepare(
-          `SELECT ${cols} FROM hunt_live ORDER BY started_at DESC, rowid DESC LIMIT ?`,
+          `SELECT ${cols} FROM hunt_live WHERE started_at >= ?
+           ORDER BY started_at DESC, rowid DESC LIMIT ? OFFSET ?`,
         )
-        .all(limit) as Row[]
+        .all(win.startIso, limit, offset) as Row[]
     ).map((r) => huntLiveRow(r)!);
     const ids = lives.map((l) => l.hunt_id as string);
     const counts = huntCounts(db, schema, ids);
@@ -416,6 +442,10 @@ export function huntsList(
       }
     }
     return {
+      window: { days: win.days, start_utc: win.startIso },
+      total,
+      offset,
+      limit,
       hunts: lives.map((live) => ({
         ...huntRow(live, counts?.get(live.hunt_id as string)),
         vacancies:
