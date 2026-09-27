@@ -117,6 +117,15 @@ describe('pipeline hunts — rules', () => {
     expect(jobState('queued', applied(''), null, now)).toBe('ready');
     expect(jobState('queued', applied('—'), null, now)).toBe('declined');
     expect(jobState('queued', applied('2026-09-27'), null, now)).toBe('sent');
+    expect(jobState('queued', applied('EXPIRED'), null, now)).toBe('expired');
+    expect(
+      jobState(
+        'queued',
+        { status: 'FAIL', sent: '—' },
+        { finished_at: null },
+        now,
+      ),
+    ).toBe('generating');
     expect(jobState('queued', { status: '(blank)', sent: '' }, null, now)).toBe(
       'skipped',
     );

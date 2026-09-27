@@ -26,7 +26,7 @@ import {
   Schema,
 } from './pipeline-snapshot';
 import { classifySent } from './sent-parse';
-import { minutesAgo, parseTs } from './snapshot-time';
+import { minutesAgo, parseTs, SnapshotWindow } from './snapshot-time';
 
 type Row = Record<string, unknown>;
 
@@ -294,24 +294,31 @@ export function jobState(
   nowMs: number,
 ): string {
   if (DUP_FATES.includes(fate)) return 'duplicate';
+  const runOpen = !!run && run.finished_at === null;
   if (tracker) {
     const status = tracker.status as string;
     if (status === 'PENDING') return 'queued';
     if (status === 'IN_PROGRESS') return 'generating';
+    // A retry / manual re-run of a FAIL or SKIP row keeps that row until it
+    // ends: the open run is the truth while it lasts.
+    if (runOpen) return 'generating';
     if (status === 'APPLIED') {
       // Only an EMPTY Sent is waiting to be sent; a dash is the owner
-      // declining by hand (the result tier's ready rule).
+      // declining by hand, EXPIRED the nightly expiry sweep.
       const sent = ((tracker.sent as string) || '').trim();
       if (!sent) return 'ready';
-      const year = new Date(nowMs).getUTCFullYear();
-      return classifySent(sent, year) === 'applied' ? 'sent' : 'declined';
+      // The Warsaw calendar year, as the result tier passes it.
+      const year = new SnapshotWindow(1, new Date(nowMs)).localYear;
+      const kind = classifySent(sent, year);
+      if (kind === 'applied') return 'sent';
+      return kind === 'expired' ? 'expired' : 'declined';
     }
     if (status === 'FAIL') return 'failed';
     if (status === 'EXPIRED') return 'expired';
     if (status === 'MANUAL') return 'manual';
     return 'skipped';
   }
-  if (run && run.finished_at === null) return 'generating';
+  if (runOpen) return 'generating';
   if (fate === 'card') return 'awaiting_decision';
   if (fate === 'capped') return 'capped';
   if (fate === 'new') return 'not_acted';
