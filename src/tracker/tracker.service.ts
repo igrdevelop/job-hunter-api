@@ -1,11 +1,16 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Database from 'better-sqlite3';
-import { runTrackerMigrations } from '../db/tracker-migrations';
+import {
+  needsUserScopeMigration,
+  runTrackerMigrations,
+} from '../db/tracker-migrations';
 import {
   APPLIED_STATUSES,
   AppStatus,
@@ -73,8 +78,11 @@ type UpdatableColumn =
   SheetsMirroredColumn | 'app_status' | 'owner_reason' | 'owner_reason_note';
 
 @Injectable()
-export class TrackerService {
+export class TrackerService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(TrackerService.name);
   readonly db: Database.Database;
+  /** The user_id step was deferred until the seeded owner exists. */
+  private userScopeDeferred = false;
 
   constructor(private readonly config: ConfigService) {
     this.db = new Database(this.config.get<string>('tracker.dbPath'));
@@ -83,21 +91,64 @@ export class TrackerService {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('busy_timeout = 5000');
 
-    // Get owner id from app.sqlite for the backfill.
-    const appDbPath = this.config.get<string>('app.dbPath')!;
-    let ownerUserId = '';
-    try {
-      const appDb = new Database(appDbPath, { readonly: true });
-      const row = appDb
-        .prepare(`SELECT id FROM users WHERE role = 'admin' LIMIT 1`)
-        .get() as { id: string } | undefined;
-      appDb.close();
-      ownerUserId = row?.id ?? '';
-    } catch {
-      // app.sqlite may not exist yet on first boot; migration runs with empty owner id.
-    }
+    // On a fresh app.sqlite the owner does not exist yet: AuthService seeds it
+    // in onModuleInit, which runs AFTER this constructor. Adding user_id now
+    // would give every legacy row user_id = '' for good, so that one step
+    // waits for onApplicationBootstrap (runs after every onModuleInit and
+    // before the app serves a request). Everything else migrates now.
+    const ownerUserId = this.resolveOwnerUserId();
+    this.userScopeDeferred = !ownerUserId && needsUserScopeMigration(this.db);
+    runTrackerMigrations(this.db, ownerUserId, {
+      deferUserScope: this.userScopeDeferred,
+    });
+  }
 
+  onApplicationBootstrap(): void {
+    if (!this.userScopeDeferred) {
+      return;
+    }
+    const ownerUserId = this.resolveOwnerUserId();
+    if (!ownerUserId) {
+      this.logger.warn(
+        'tracker.db: no owner account (no admin in app.sqlite, or OWNER_USER_ID ' +
+          "names an unknown account) — legacy applications rows get user_id = '' " +
+          'and are visible to nobody. Set SEED_USER_EMAIL/SEED_USER_PASSWORD.',
+      );
+    }
     runTrackerMigrations(this.db, ownerUserId);
+    this.userScopeDeferred = false;
+  }
+
+  /**
+   * The account that owns the legacy (pre-multi-user) rows. OWNER_USER_ID
+   * decides when set — the same narrowing override AuthService.isOwner
+   * honours — but only if that account exists, so a stale value never hands
+   * the rows to an id nobody can log in as. Otherwise the oldest admin.
+   */
+  private resolveOwnerUserId(): string {
+    const appDbPath = this.config.get<string>('app.dbPath')!;
+    const configured = this.config.get<string>('owner.userId') ?? '';
+    let appDb: Database.Database | undefined;
+    try {
+      appDb = new Database(appDbPath, { readonly: true, fileMustExist: true });
+      if (configured) {
+        const row = appDb
+          .prepare(`SELECT id FROM users WHERE id = ?`)
+          .get(configured) as { id: string } | undefined;
+        return row?.id ?? '';
+      }
+      const row = appDb
+        .prepare(
+          `SELECT id FROM users WHERE role = 'admin' ORDER BY created_at, rowid LIMIT 1`,
+        )
+        .get() as { id: string } | undefined;
+      return row?.id ?? '';
+    } catch {
+      // app.sqlite (or its users table) may not exist yet on first boot.
+      return '';
+    } finally {
+      appDb?.close();
+    }
   }
 
   getApplications(
