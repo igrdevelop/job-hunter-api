@@ -24,6 +24,7 @@ import {
   parseJson,
   placeholders,
   Schema,
+  TrackerSchemaError,
 } from './pipeline-snapshot';
 import { classifySent } from './sent-parse';
 import { minutesAgo, parseTs, SnapshotWindow } from './snapshot-time';
@@ -190,10 +191,16 @@ function trackerRowsFor(
   const out = new Map<string, Row>();
   const keys = [...urlNorms].filter(Boolean).sort(byCodepoint);
   if (!keys.length) return out;
+  // The API always has `applications` (TrackerService migrates it): a table
+  // missing these columns is a broken tracker.db, not "no tracker rows" —
+  // 503 like the snapshot, never a 200 that labels every vacancy wrongly.
+  // (The bot's dev-only tool returns no rows here instead.)
   if (
     !schema.has('applications', ['url_norm', 'ats_status', 'sent', 'user_id'])
   ) {
-    return out;
+    throw new TrackerSchemaError(
+      'applications table lacks the columns the hunt drill-down reads',
+    );
   }
   const cols = schema.columns('applications');
   const extra = TRACKER_OPTIONAL.filter((c) => cols.has(c));

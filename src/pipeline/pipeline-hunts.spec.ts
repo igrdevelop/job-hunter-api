@@ -3,6 +3,7 @@ import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { huntDetail, huntsList, huntStatus, jobState } from './pipeline-hunts';
+import { TrackerSchemaError } from './pipeline-snapshot';
 import {
   buildHuntsContractDb,
   EXPECTED_HUNT_DETAIL,
@@ -97,6 +98,19 @@ describe('pipeline hunts — missing tables are null, never 0', () => {
     const d = huntDetail(db, 'h1', opts)!;
     expect(d.jobs).toBeNull();
     expect(d.per_source).toBeNull();
+    db.close();
+  });
+});
+
+describe('pipeline hunts — a broken applications table', () => {
+  it('throws TrackerSchemaError (503) instead of labelling every vacancy', () => {
+    const path = tmpDbPath();
+    buildHuntsContractDb(path);
+    const w = new Database(path);
+    w.exec('ALTER TABLE applications DROP COLUMN sent');
+    w.close();
+    const db = new Database(path, { readonly: true });
+    expect(() => huntDetail(db, 'h_done', opts)).toThrow(TrackerSchemaError);
     db.close();
   });
 });
