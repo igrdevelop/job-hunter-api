@@ -273,7 +273,10 @@ GET /api/pipeline/hunts/:huntId     → one hunt's drill-down: { hunt, per_sourc
                                       contract = the "Hunts table + one hunt's drill-down"
                                       section of the bot's PIPELINE_SNAPSHOT_CONTRACT.md,
                                       fixtures test/fixtures/pipeline_hunts/ (byte-copies).
-                                      Same JWT/no-owner-gate/scoping/503 rules as the snapshot.
+                                      OWNER-ONLY on both (403 otherwise): the hunt is the one
+                                      bot's hunt, and per-vacancy `duplicate` rows would show
+                                      another user the owner's applied URLs. Same 503 rules as
+                                      the snapshot.
 POST /api/pipeline/commands         { kind: 'hunt'|'retry_failed'|'check_expired', sources?: string[]|null }
                                       → 201 { id }. OWNER-ONLY (AuthService.isOwner, else 403).
                                       Inserts a `pending` bot_commands row (TrackerService's

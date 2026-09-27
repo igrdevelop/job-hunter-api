@@ -39,17 +39,20 @@ export class PipelineController {
 
   /**
    * The hunts table: the newest hunt_live rows with their funnel counts and
-   * a summary of their vacancies. Same scoping as the snapshot — the hunt
-   * tables are global, each vacancy's tracker state is the caller's own.
+   * a summary of their vacancies. OWNER-ONLY: the hunt is the one bot's hunt
+   * (no per-user hunts exist), and its per-vacancy rows would show another
+   * user which URLs the owner has already applied to (`duplicate`).
    */
   @Get('hunts')
   hunts(@CurrentUser() user: CurrentUserData, @Query() query: HuntsQueryDto) {
+    this.requireOwner(user);
     return this.pipeline.getHunts(user.id, query.limit);
   }
 
-  /** One hunt's drill-down → 404 when unknown. */
+  /** One hunt's drill-down → 404 when unknown. Owner-only, like the list. */
   @Get('hunts/:huntId')
   hunt(@CurrentUser() user: CurrentUserData, @Param('huntId') huntId: string) {
+    this.requireOwner(user);
     // The bot writes uuid4().hex; the pattern only keeps junk out of the query.
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(huntId)) {
       throw new BadRequestException('invalid hunt id');

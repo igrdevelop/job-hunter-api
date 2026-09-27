@@ -23,6 +23,7 @@ describe('Pipeline hunts (e2e)', () => {
   let app: INestApplication<App>;
   let trackerDbPath: string;
   let token: string;
+  let otherToken: string;
   const email = 'pipeline-hunts-e2e@test.local';
   const password = 'pipeline-hunts-e2e-password-1';
 
@@ -36,6 +37,7 @@ describe('Pipeline hunts (e2e)', () => {
     process.env.USERS_ROOT = join(root, 'users');
     process.env.SEED_USER_EMAIL = email;
     process.env.SEED_USER_PASSWORD = password;
+    process.env.REGISTRATION_ENABLED = 'true';
     delete process.env.APPLY_FAILURES_LOG_PATH;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -61,6 +63,23 @@ describe('Pipeline hunts (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
+    // A second, non-owner account (registration + verified email).
+    const otherEmail = 'pipeline-hunts-e2e-b@test.local';
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: otherEmail, password })
+      .expect(201);
+    const appDb = new Database(join(root, 'app.sqlite'));
+    appDb
+      .prepare('UPDATE users SET email_verified = 1 WHERE email = ?')
+      .run(otherEmail);
+    appDb.close();
+    const loginB = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: otherEmail, password })
+      .expect(201);
+    otherToken = loginB.body.accessToken as string;
+
     const tracker = new Database(trackerDbPath);
     for (const table of ['applications', 'generation_runs']) {
       tracker
@@ -82,6 +101,15 @@ describe('Pipeline hunts (e2e)', () => {
   it('401 without a token', async () => {
     await get('/api/pipeline/hunts', false).expect(401);
     await get('/api/pipeline/hunts/h_done', false).expect(401);
+  });
+
+  it('403 for a non-owner, on both routes', async () => {
+    for (const path of ['/api/pipeline/hunts', '/api/pipeline/hunts/h_done']) {
+      await request(app.getHttpServer())
+        .get(path)
+        .set('Authorization', `Bearer ${otherToken}`)
+        .expect(403);
+    }
   });
 
   it('lists the hunts exactly as the bot contract says', async () => {
