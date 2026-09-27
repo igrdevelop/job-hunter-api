@@ -51,7 +51,7 @@ export const MAX_FAIL_RETRIES = 3;
 export const DEFAULT_EVENTS_LIMIT = 15;
 
 /** `hunter.hunt_runs.COUNT_COLUMNS`, in DDL order. */
-const HUNT_RUN_COUNT_COLUMNS = [
+export const HUNT_RUN_COUNT_COLUMNS = [
   'found',
   'filtered_out',
   'dup_url',
@@ -181,7 +181,7 @@ export interface SnapshotOptions {
 
 // ── Schema probes ─────────────────────────────────────────────────────────────
 
-class Schema {
+export class Schema {
   private readonly cache = new Map<string, Set<string>>();
 
   constructor(private readonly db: Database.Database) {}
@@ -229,11 +229,11 @@ export function bucketStatus(ats: string | null | undefined): string {
   return 'APPLIED';
 }
 
-function placeholders(n: number): string {
+export function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',');
 }
 
-function parseJson(raw: unknown, fallback: string): unknown {
+export function parseJson(raw: unknown, fallback: string): unknown {
   try {
     return JSON.parse((raw as string) || fallback);
   } catch {
@@ -241,7 +241,7 @@ function parseJson(raw: unknown, fallback: string): unknown {
   }
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
@@ -423,7 +423,7 @@ function scalar(db: Database.Database, sql: string, ...params: unknown[]) {
 }
 
 /** Map one `hunt_live` row to its contract shape (`sources` parsed). */
-function huntLiveRow(r: Row | undefined): Row | null {
+export function huntLiveRow(r: Row | undefined): Row | null {
   if (!r) return null;
   const sources = parseJson(r.sources, '[]');
   return {
@@ -640,7 +640,7 @@ export function refineConfig(
  * scoping"): `(user_id = ? OR user_id = '')` — two users can hold the same
  * vacancy (same url_norm), and one user's card must never show the other's run.
  */
-function openRunFor(
+export function openRunFor(
   db: Database.Database,
   urlNorm: string,
   userId: string,

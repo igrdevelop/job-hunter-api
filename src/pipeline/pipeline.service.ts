@@ -2,11 +2,13 @@ import {
   Inject,
   Injectable,
   Logger,
+  NotFoundException,
   OnModuleDestroy,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Database from 'better-sqlite3';
+import { huntDetail, huntsList } from './pipeline-hunts';
 import { buildSnapshot, TrackerSchemaError } from './pipeline-snapshot';
 
 export const PIPELINE_CLOCK = Symbol('PIPELINE_CLOCK');
@@ -74,14 +76,48 @@ export class PipelineService implements OnModuleDestroy {
 
   getSnapshot(userId: string, days: number) {
     const started = performance.now();
-    let snapshot: Record<string, unknown>;
-    try {
-      snapshot = buildSnapshot(this.handle(), {
+    const snapshot = this.read('snapshot', (db) =>
+      buildSnapshot(db, {
         days,
         userId,
         now: this.clock(),
         failuresLogPath: this.config.get<string>('pipeline.failuresLogPath'),
-      });
+      }),
+    );
+    const elapsed = performance.now() - started;
+    if (elapsed > SLOW_SNAPSHOT_MS) {
+      this.logger.warn(
+        `pipeline snapshot took ${elapsed.toFixed(0)} ms (days=${days})`,
+      );
+    }
+    return snapshot;
+  }
+
+  /**
+   * The hunts table (docs/HUNT_DRILLDOWN_PLAN.md in the bot repo). `null`
+   * — the bot has not created `hunt_live` yet — is a valid answer, served
+   * as `{hunts: null}` so the page can say "not measured yet".
+   */
+  getHunts(userId: string, limit: number) {
+    const list = this.read('hunts', (db) =>
+      huntsList(db, { userId, now: this.clock(), limit }),
+    );
+    return list ?? { hunts: null };
+  }
+
+  /** One hunt's drill-down; 404 when neither hunt_live nor hunt_runs knows it. */
+  getHunt(userId: string, huntId: string) {
+    const detail = this.read('hunt', (db) =>
+      huntDetail(db, huntId, { userId, now: this.clock() }),
+    );
+    if (!detail) throw new NotFoundException('hunt not found');
+    return detail;
+  }
+
+  /** Run one read, mapping schema / transient SQLite failures to 503. */
+  private read<T>(what: string, fn: (db: Database.Database) => T): T {
+    try {
+      return fn(this.handle());
     } catch (err) {
       if (err instanceof TrackerSchemaError) {
         throw new ServiceUnavailableException(err.message);
@@ -89,7 +125,7 @@ export class PipelineService implements OnModuleDestroy {
       const code = sqliteCode(err);
       if (code) {
         this.logger.warn(
-          `pipeline snapshot failed with ${code}; dropping the tracker.db handle`,
+          `pipeline ${what} failed with ${code}; dropping the tracker.db handle`,
         );
         this.dropHandle();
         throw new ServiceUnavailableException(
@@ -98,13 +134,6 @@ export class PipelineService implements OnModuleDestroy {
       }
       throw err;
     }
-    const elapsed = performance.now() - started;
-    if (elapsed > SLOW_SNAPSHOT_MS) {
-      this.logger.warn(
-        `pipeline snapshot took ${elapsed.toFixed(0)} ms (days=${days})`,
-      );
-    }
-    return snapshot;
   }
 
   private dropHandle(): void {

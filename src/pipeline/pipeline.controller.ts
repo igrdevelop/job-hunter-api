@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  BadRequestException,
   Get,
   Param,
   Post,
@@ -11,6 +12,7 @@ import { AuthService } from '../auth/auth.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserData } from '../auth/decorators/current-user.decorator';
 import { CreateCommandDto } from './dto/create-command.dto';
+import { HuntsQueryDto } from './dto/hunts-query.dto';
 import { SnapshotQueryDto } from './dto/snapshot-query.dto';
 import { PipelineCommandsService } from './pipeline-commands.service';
 import { PipelineService } from './pipeline.service';
@@ -33,6 +35,29 @@ export class PipelineController {
     @Query() query: SnapshotQueryDto,
   ) {
     return this.pipeline.getSnapshot(user.id, query.days);
+  }
+
+  /**
+   * The hunts table: the newest hunt_live rows with their funnel counts and
+   * a summary of their vacancies. OWNER-ONLY: the hunt is the one bot's hunt
+   * (no per-user hunts exist), and its per-vacancy rows would show another
+   * user which URLs the owner has already applied to (`duplicate`).
+   */
+  @Get('hunts')
+  hunts(@CurrentUser() user: CurrentUserData, @Query() query: HuntsQueryDto) {
+    this.requireOwner(user);
+    return this.pipeline.getHunts(user.id, query.limit);
+  }
+
+  /** One hunt's drill-down → 404 when unknown. Owner-only, like the list. */
+  @Get('hunts/:huntId')
+  hunt(@CurrentUser() user: CurrentUserData, @Param('huntId') huntId: string) {
+    this.requireOwner(user);
+    // The bot writes uuid4().hex; the pattern only keeps junk out of the query.
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(huntId)) {
+      throw new BadRequestException('invalid hunt id');
+    }
+    return this.pipeline.getHunt(user.id, huntId);
   }
 
   /** Queue a hunt / retry_failed / check_expired for the bot → 201 {id}. */
