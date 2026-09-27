@@ -98,9 +98,12 @@ export class PipelineService implements OnModuleDestroy {
    * — the bot has not created `hunt_live` yet — is a valid answer, served
    * as `{hunts: null}` so the page can say "not measured yet".
    */
-  getHunts(userId: string, limit: number) {
+  getHunts(
+    userId: string,
+    page: { days: number; offset: number; limit: number },
+  ) {
     const list = this.read('hunts', (db) =>
-      huntsList(db, { userId, now: this.clock(), limit }),
+      huntsList(db, { userId, now: this.clock(), ...page }),
     );
     return list ?? { hunts: null };
   }
