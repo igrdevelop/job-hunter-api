@@ -124,3 +124,32 @@ jobs:
             docker image prune -af
         env:
           COMPOSE_CONTENT: ${{ steps.compose.outputs.content }}
+
+      # Post-deploy live smoke. job-hunter-site's smoke.yml only reacts to the
+      # site's OWN deploy (workflow_run cannot see another repo's workflows),
+      # so an API deploy never re-ran it — a regression shipped here stayed
+      # invisible until the next site deploy. Dispatch it explicitly.
+      # Needs SITE_SMOKE_DISPATCH_TOKEN: a fine-grained PAT scoped to
+      # igrdevelop/job-hunter-site with Actions: read & write (GITHUB_TOKEN
+      # cannot dispatch into another repository). Without the secret the step
+      # is skipped; a failed dispatch never fails the deploy — the smoke run
+      # reports its own result.
+      - name: Check smoke dispatch token
+        if: github.ref == 'refs/heads/master'
+        id: smoke
+        env:
+          SITE_SMOKE_DISPATCH_TOKEN: ${{ secrets.SITE_SMOKE_DISPATCH_TOKEN }}
+        run: |
+          if [ -n "$SITE_SMOKE_DISPATCH_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "SITE_SMOKE_DISPATCH_TOKEN not set - skipping the site smoke dispatch"
+          fi
+
+      - name: Trigger site live smoke
+        if: github.ref == 'refs/heads/master' && steps.smoke.outputs.enabled == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.SITE_SMOKE_DISPATCH_TOKEN }}
+        run: gh workflow run smoke.yml -R igrdevelop/job-hunter-site --ref master
